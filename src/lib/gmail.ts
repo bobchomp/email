@@ -12,7 +12,14 @@ async function getGmailClient(): Promise<gmail_v1.Gmail> {
   if (!account) {
     throw new ReconnectRequiredError();
   }
-  const refreshToken = decryptSecret(account.encryptedRefreshToken);
+  let refreshToken: string;
+  try {
+    refreshToken = decryptSecret(account.encryptedRefreshToken);
+  } catch {
+    // A stored token that no longer decrypts (e.g. ENCRYPTION_KEY changed)
+    // is unrecoverable — the fix is the same as an expired token: reconnect.
+    throw new ReconnectRequiredError();
+  }
   const client = createOAuthClient();
   client.setCredentials({ refresh_token: refreshToken });
   return google.gmail({ version: "v1", auth: client });
@@ -204,16 +211,26 @@ export async function deleteMessagePermanently(id: string): Promise<void> {
   await withGmail((gmail) => gmail.users.messages.delete({ userId: "me", id }));
 }
 
-export type Label = { id: string; name: string; type: string | null | undefined };
+export type Label = {
+  id: string;
+  name: string;
+  type: string | null | undefined;
+  color: string | null;
+};
 
 export async function listLabels(): Promise<Label[]> {
   return withGmail(async (gmail) => {
     const res = await gmail.users.labels.list({ userId: "me" });
-    return (res.data.labels ?? []).map((l) => ({
-      id: l.id!,
-      name: l.name!,
-      type: l.type,
-    }));
+    return (res.data.labels ?? [])
+      // Mirrors Gmail's own sidebar: a label the user hid from their label
+      // list shouldn't reappear here just because it still exists.
+      .filter((l) => l.labelListVisibility !== "labelHide")
+      .map((l) => ({
+        id: l.id!,
+        name: l.name!,
+        type: l.type,
+        color: l.color?.backgroundColor ?? null,
+      }));
   });
 }
 

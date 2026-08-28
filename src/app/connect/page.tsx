@@ -11,13 +11,13 @@ export default async function ConnectPage({
   const account = await getGoogleAccount();
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-zinc-50 dark:bg-black px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-950 p-8 shadow-sm flex flex-col gap-5 text-center">
+    <div className="flex flex-1 items-center justify-center bg-paper px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-8 shadow-sm flex flex-col gap-5 text-center">
         <div>
-          <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+          <h1 className="text-xl font-semibold text-body">
             {account ? "Reconnect Google" : "Connect your Gmail account"}
           </h1>
-          <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="mt-2 text-sm text-muted">
             {account
               ? `Your connection to ${account.email ?? "Google"} needs to be renewed. This happens roughly every 7 days because the app isn't verified by Google — it takes one click.`
               : "Sign in with Google once. After this, you'll only need your PIN to get back in from any device."}
@@ -25,19 +25,19 @@ export default async function ConnectPage({
         </div>
 
         {reason === "expired" && (
-          <p className="text-sm text-amber-600 dark:text-amber-400">
+          <p className="text-sm text-seal-deep">
             Your Google connection expired — please reconnect.
           </p>
         )}
         {error && (
-          <p className="text-sm text-red-600 dark:text-red-400 break-words">
+          <p className="text-sm text-seal-deep break-words">
             {decodeURIComponent(error)}
           </p>
         )}
 
         <a
           href="/api/auth/google/start"
-          className="w-full rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 py-3 font-medium inline-flex items-center justify-center gap-2"
+          className="w-full rounded-full border border-line bg-white text-body py-3 font-medium inline-flex items-center justify-center gap-2 hover:bg-surface-2"
         >
           <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
             <path
@@ -60,7 +60,7 @@ export default async function ConnectPage({
           Sign in with Google
         </a>
 
-        <p className="text-xs text-zinc-400">
+        <p className="text-xs text-muted">
           Grants full Gmail access (read, send, delete) so this app can act on
           your real inbox.
         </p>

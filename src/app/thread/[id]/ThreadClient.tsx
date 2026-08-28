@@ -81,16 +81,16 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
   }
 
   if (loading) {
-    return <p className="p-6 text-center text-sm text-zinc-400">Loading…</p>;
+    return <p className="p-6 text-center text-sm text-muted">Loading…</p>;
   }
   if (error) {
-    return <p className="p-6 text-center text-sm text-red-500">{error}</p>;
+    return <p className="p-6 text-center text-sm text-seal-deep">{error}</p>;
   }
 
   const last = messages[messages.length - 1];
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col bg-zinc-50 dark:bg-black">
+    <div className="flex-1 min-h-0 flex flex-col bg-paper">
       {replyPrefill && (
         <ComposeModal
           prefill={replyPrefill}
@@ -99,23 +99,28 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
         />
       )}
 
-      <div className="flex items-center gap-3 p-3 border-b border-black/10 dark:border-white/10">
+      <div className="flex items-center gap-3 p-3 border-b border-line bg-surface">
         <button
           onClick={() => router.push("/inbox")}
-          className="text-sm text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+          className="text-sm text-muted hover:text-body"
         >
           ← Back
         </button>
-        <h1 className="flex-1 min-w-0 truncate font-medium text-zinc-900 dark:text-zinc-50">
+        <h1 className="flex-1 min-w-0 truncate font-medium text-body">
           {last?.subject}
         </h1>
         {last && (
-          <div className="flex gap-3 text-sm text-zinc-500">
-            <button onClick={() => act(last.id, last.starred ? "unstar" : "star")}>
+          <div className="flex gap-3 text-sm text-muted">
+            <button
+              onClick={() => act(last.id, last.starred ? "unstar" : "star")}
+              className={last.starred ? "text-seal" : "hover:text-body"}
+            >
               {last.starred ? "★ Starred" : "☆ Star"}
             </button>
-            <button onClick={() => act(last.id, "archive")}>Archive</button>
-            <button onClick={() => act(last.id, "trash")} className="text-red-600 dark:text-red-400">
+            <button onClick={() => act(last.id, "archive")} className="hover:text-body">
+              Archive
+            </button>
+            <button onClick={() => act(last.id, "trash")} className="text-seal-deep hover:underline">
               Trash
             </button>
           </div>
@@ -124,16 +129,13 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
 
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
         {messages.map((m) => (
-          <div
-            key={m.id}
-            className="rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-950 p-4"
-          >
+          <div key={m.id} className="rounded-xl border border-line bg-surface p-4">
             <div className="flex items-baseline justify-between gap-2 mb-2">
               <div className="min-w-0">
-                <p className="font-medium text-zinc-900 dark:text-zinc-50 truncate">{m.from}</p>
-                <p className="text-xs text-zinc-400 truncate">To: {m.to}</p>
+                <p className="font-medium text-body truncate">{m.from}</p>
+                <p className="text-xs text-muted truncate">To: {m.to}</p>
               </div>
-              <span className="text-xs text-zinc-400 shrink-0">
+              <span className="text-xs text-muted shrink-0">
                 {m.date ? new Date(m.date).toLocaleString() : ""}
               </span>
             </div>
@@ -146,14 +148,14 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
                 style={{ height: 400 }}
               />
             ) : (
-              <pre className="whitespace-pre-wrap font-sans text-sm text-zinc-800 dark:text-zinc-200">
+              <pre className="whitespace-pre-wrap font-sans text-sm text-body">
                 {m.body.text || m.snippet}
               </pre>
             )}
 
             <button
               onClick={() => openReply(m)}
-              className="mt-3 text-sm text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+              className="mt-3 text-sm text-ink hover:text-ink-deep font-medium"
             >
               Reply
             </button>
