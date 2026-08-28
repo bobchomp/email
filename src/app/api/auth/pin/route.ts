@@ -16,7 +16,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "PIN is required" }, { status: 400 });
   }
 
-  const result = await checkPin(pin);
+  let result;
+  try {
+    result = await checkPin(pin);
+  } catch (err) {
+    console.error("PIN check failed:", err);
+    return NextResponse.json(
+      {
+        error: "server_error",
+        message: err instanceof Error ? err.message : "Unknown error",
+      },
+      { status: 500 }
+    );
+  }
 
   if (!result.ok) {
     if (result.locked) {
