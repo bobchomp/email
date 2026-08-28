@@ -4,12 +4,29 @@ import { Pool } from "pg";
 // exhausting the DB's connection limit on every cold start / hot reload).
 const globalForPg = globalThis as unknown as { pgPool?: Pool };
 
+// Vercel's Storage tab prefixes every var it injects with the storage
+// resource's name (e.g. `storage_DATABASE_URL`, `storage_POSTGRES_URL`)
+// instead of a plain `DATABASE_URL`. Fall back to finding one of those.
+function resolveDatabaseUrl(): string {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+
+  const keys = Object.keys(process.env);
+  const pooledSuffixes = [/_DATABASE_URL$/, /_POSTGRES_URL$/];
+  for (const pattern of pooledSuffixes) {
+    const key = keys.find((k) => pattern.test(k) && !/NON_POOLING|NO_SSL|PRISMA|UNPOOLED/.test(k));
+    if (key) return process.env[key]!;
+  }
+
+  throw new Error(
+    "DATABASE_URL environment variable is not set, and no *_DATABASE_URL / " +
+      "*_POSTGRES_URL fallback was found either. Add a Postgres database " +
+      "(Vercel Storage tab) or set DATABASE_URL directly."
+  );
+}
+
 function getPool(): Pool {
   if (!globalForPg.pgPool) {
-    const url = process.env.DATABASE_URL;
-    if (!url) {
-      throw new Error("DATABASE_URL environment variable is not set");
-    }
+    const url = resolveDatabaseUrl();
     globalForPg.pgPool = new Pool({
       connectionString: url,
       ssl: url.includes("localhost") ? false : { rejectUnauthorized: false },
