@@ -45,11 +45,15 @@ function UnlockForm() {
       if (res.status === 429) {
         setLockedSeconds(data.retryAfterSeconds ?? null);
         setError("Too many wrong attempts. Locked for now.");
-      } else {
+      } else if (res.status === 401) {
         setError(
           data.attemptsRemaining !== undefined
             ? `Incorrect PIN. ${data.attemptsRemaining} attempt(s) left.`
             : "Incorrect PIN."
+        );
+      } else {
+        setError(
+          `Server error, this isn't a wrong PIN — check your deployment's environment variables. (${data.message ?? res.status})`
         );
       }
       setPin("");
