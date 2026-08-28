@@ -2,19 +2,28 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MessageSummary } from "@/lib/gmail";
+import type { MessageSummary, Label } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
 import ComposeModal from "./ComposeModal";
 
-type Folder = { key: string; label: string; labelIds?: string[] };
+type FolderEntry = { key: string; label: string; labelIds?: string[]; color?: string | null };
 
-const FOLDERS: Folder[] = [
-  { key: "inbox", label: "Inbox", labelIds: ["INBOX"] },
-  { key: "starred", label: "Starred", labelIds: ["STARRED"] },
-  { key: "sent", label: "Sent", labelIds: ["SENT"] },
-  { key: "trash", label: "Trash", labelIds: ["TRASH"] },
-  { key: "all", label: "All Mail" },
+// Gmail's own sidebar order. "ALL" is synthetic (no labelIds = no filter)
+// and always shown; everything else only shows once we know it actually
+// exists (and isn't hidden) on the connected account.
+const SYSTEM_LABEL_ORDER: { id: string; label: string; synthetic?: boolean }[] = [
+  { id: "INBOX", label: "Inbox" },
+  { id: "STARRED", label: "Starred" },
+  { id: "IMPORTANT", label: "Important" },
+  { id: "SENT", label: "Sent" },
+  { id: "DRAFT", label: "Drafts" },
+  { id: "ALL", label: "All Mail", synthetic: true },
+  { id: "SPAM", label: "Spam" },
+  { id: "TRASH", label: "Trash" },
 ];
+
+// Shown before the real label list has loaded, so the sidebar isn't empty.
+const DEFAULT_VISIBLE_IDS = new Set(["INBOX", "STARRED", "SENT", "TRASH"]);
 
 function fromName(from: string): string {
   const match = from.match(/^"?([^"<]*)"?\s*(<.*>)?$/);
@@ -28,7 +37,13 @@ export default function InboxClient({
   accountEmail: string | null;
 }) {
   const router = useRouter();
-  const [folder, setFolder] = useState<Folder>(FOLDERS[0]);
+  const [folder, setFolder] = useState<FolderEntry>({
+    key: "INBOX",
+    label: "Inbox",
+    labelIds: ["INBOX"],
+  });
+  const [labels, setLabels] = useState<Label[]>([]);
+  const [labelsLoaded, setLabelsLoaded] = useState(false);
   const [query, setQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [messages, setMessages] = useState<MessageSummary[]>([]);
@@ -38,6 +53,33 @@ export default function InboxClient({
   const [composeOpen, setComposeOpen] = useState(false);
   const [reconnectNeeded, setReconnectNeeded] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ labels: Label[] }>("/api/gmail/labels")
+      .then((data) => {
+        setLabels(data.labels);
+        setLabelsLoaded(true);
+      })
+      .catch((err) => {
+        if (err instanceof ReconnectRequiredClientError) setReconnectNeeded(true);
+        setLabelsLoaded(true);
+      });
+  }, []);
+
+  const systemFolders: FolderEntry[] = SYSTEM_LABEL_ORDER.filter(
+    (s) =>
+      s.synthetic ||
+      (labelsLoaded ? labels.some((l) => l.id === s.id) : DEFAULT_VISIBLE_IDS.has(s.id))
+  ).map((s) => ({
+    key: s.id,
+    label: s.label,
+    labelIds: s.id === "ALL" ? undefined : [s.id],
+  }));
+
+  const userLabels: FolderEntry[] = labels
+    .filter((l) => l.type === "user")
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((l) => ({ key: l.id, label: l.name, labelIds: [l.id], color: l.color }));
 
   const load = useCallback(
     async (opts: { append?: boolean; pageToken?: string } = {}) => {
@@ -146,18 +188,18 @@ export default function InboxClient({
 
   if (reconnectNeeded) {
     return (
-      <div className="flex flex-1 items-center justify-center bg-zinc-50 dark:bg-black px-4">
+      <div className="flex flex-1 items-center justify-center bg-paper px-4">
         <div className="text-center max-w-sm">
-          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+          <h1 className="text-lg font-semibold text-body">
             Google connection expired
           </h1>
-          <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="mt-2 text-sm text-muted">
             This happens roughly every 7 days for an unverified app. Reconnect
             to keep going — your PIN and settings stay the same.
           </p>
           <a
             href="/connect?reason=expired"
-            className="mt-4 inline-block rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 font-medium"
+            className="mt-4 inline-block rounded-full bg-ink text-white px-5 py-2.5 font-medium"
           >
             Reconnect Google
           </a>
@@ -166,46 +208,73 @@ export default function InboxClient({
     );
   }
 
+  function NavButton({ f }: { f: FolderEntry }) {
+    const isActive = folder.key === f.key;
+    return (
+      <button
+        onClick={() => setFolder(f)}
+        className={`flex items-center gap-2.5 text-left px-3 py-2 rounded-lg text-sm truncate ${
+          isActive
+            ? "bg-white text-ink-deep font-medium shadow-sm"
+            : "text-muted hover:bg-white/60 hover:text-body"
+        }`}
+      >
+        {f.color !== undefined && (
+          <span
+            className="h-2 w-2 rounded-full shrink-0"
+            style={{ background: f.color ?? "var(--color-line)" }}
+          />
+        )}
+        <span className="truncate">{f.label}</span>
+      </button>
+    );
+  }
+
   return (
-    <div className="flex flex-1 min-h-0 bg-zinc-50 dark:bg-black">
+    <div className="flex flex-1 min-h-0 bg-paper">
       {composeOpen && (
         <ComposeModal onClose={() => setComposeOpen(false)} onSent={() => load()} />
       )}
 
       {/* Sidebar */}
-      <aside className="w-56 shrink-0 border-r border-black/10 dark:border-white/10 flex flex-col p-4 gap-4">
+      <aside className="w-56 shrink-0 bg-surface-2 flex flex-col p-4 gap-4 overflow-y-auto">
         <button
           onClick={() => setComposeOpen(true)}
-          className="rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium py-2.5 px-4"
+          className="rounded-full bg-ink hover:bg-ink-deep text-white font-medium py-2.5 px-4 transition-colors"
         >
           Compose
         </button>
+
         <nav className="flex flex-col gap-1">
-          {FOLDERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setFolder(f)}
-              className={`text-left px-3 py-2 rounded-lg text-sm ${
-                folder.key === f.key
-                  ? "bg-zinc-200 dark:bg-zinc-800 font-medium text-zinc-900 dark:text-zinc-50"
-                  : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
-              }`}
-            >
-              {f.label}
-            </button>
+          {systemFolders.map((f) => (
+            <NavButton key={f.key} f={f} />
           ))}
         </nav>
-        <div className="mt-auto text-xs text-zinc-400 flex flex-col gap-2">
+
+        {userLabels.length > 0 && (
+          <div>
+            <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-wide text-muted">
+              Labels
+            </p>
+            <nav className="flex flex-col gap-1">
+              {userLabels.map((f) => (
+                <NavButton key={f.key} f={f} />
+              ))}
+            </nav>
+          </div>
+        )}
+
+        <div className="mt-auto text-xs text-muted flex flex-col gap-2">
           {accountEmail && <span className="truncate">{accountEmail}</span>}
-          <button onClick={logout} className="text-left hover:text-zinc-700 dark:hover:text-zinc-200">
+          <button onClick={logout} className="text-left hover:text-body">
             Lock
           </button>
         </div>
       </aside>
 
       {/* Main */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        <div className="flex items-center gap-3 p-3 border-b border-black/10 dark:border-white/10">
+      <div className="flex-1 min-w-0 flex flex-col bg-surface">
+        <div className="flex items-center gap-3 p-3 border-b border-line">
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -217,36 +286,36 @@ export default function InboxClient({
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Search mail"
-              className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 px-4 py-2 text-sm outline-none text-zinc-900 dark:text-zinc-50"
+              className="w-full rounded-full bg-surface-2 px-4 py-2 text-sm outline-none text-body placeholder:text-muted focus:ring-1 focus:ring-ink"
             />
           </form>
           <button
             onClick={() => load()}
-            className="text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
+            className="text-sm text-muted hover:text-body"
           >
             Refresh
           </button>
         </div>
 
         {selected.size > 0 && (
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-black/10 dark:border-white/10 text-sm">
-            <span className="text-zinc-500">{selected.size} selected</span>
-            <button onClick={() => runAction([...selected], "archive")} className="hover:underline">
+          <div className="flex items-center gap-4 px-3 py-2 border-b border-line bg-surface-2 text-sm">
+            <span className="text-muted">{selected.size} selected</span>
+            <button onClick={() => runAction([...selected], "archive")} className="text-ink hover:text-ink-deep hover:underline">
               Archive
             </button>
-            <button onClick={() => runAction([...selected], "trash")} className="hover:underline">
+            <button onClick={() => runAction([...selected], "trash")} className="text-ink hover:text-ink-deep hover:underline">
               Trash
             </button>
-            <button onClick={() => runAction([...selected], "markRead")} className="hover:underline">
+            <button onClick={() => runAction([...selected], "markRead")} className="text-ink hover:text-ink-deep hover:underline">
               Mark read
             </button>
-            <button onClick={() => runAction([...selected], "markUnread")} className="hover:underline">
+            <button onClick={() => runAction([...selected], "markUnread")} className="text-ink hover:text-ink-deep hover:underline">
               Mark unread
             </button>
-            {folder.key === "trash" && (
+            {folder.key === "TRASH" && (
               <button
                 onClick={() => deleteForever([...selected])}
-                className="hover:underline text-red-600 dark:text-red-400"
+                className="text-seal-deep hover:underline"
               >
                 Delete forever
               </button>
@@ -255,22 +324,20 @@ export default function InboxClient({
         )}
 
         {actionError && (
-          <p className="px-3 py-2 text-sm text-red-600 dark:text-red-400">{actionError}</p>
+          <p className="px-3 py-2 text-sm text-seal-deep">{actionError}</p>
         )}
 
         <div className="flex-1 overflow-y-auto">
           {loading && messages.length === 0 ? (
-            <p className="p-6 text-center text-sm text-zinc-400">Loading…</p>
+            <p className="p-6 text-center text-sm text-muted">Loading…</p>
           ) : messages.length === 0 ? (
-            <p className="p-6 text-center text-sm text-zinc-400">No messages</p>
+            <p className="p-6 text-center text-sm text-muted">No messages</p>
           ) : (
             <ul>
               {messages.map((m) => (
                 <li
                   key={m.id}
-                  className={`flex items-center gap-3 px-3 py-2.5 border-b border-black/5 dark:border-white/5 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-900 ${
-                    m.unread ? "bg-white dark:bg-zinc-950" : "bg-zinc-50/50 dark:bg-black"
-                  }`}
+                  className="flex items-center gap-3 px-3 py-2.5 border-b border-line cursor-pointer hover:bg-surface-2"
                   onClick={() => router.push(`/thread/${m.threadId}`)}
                 >
                   <input
@@ -278,37 +345,37 @@ export default function InboxClient({
                     checked={selected.has(m.id)}
                     onClick={(e) => e.stopPropagation()}
                     onChange={() => toggleSelect(m.id)}
+                    className="accent-ink"
                   />
+                  {m.unread ? (
+                    <span className="h-1.5 w-1.5 rounded-full bg-ink shrink-0" aria-hidden />
+                  ) : (
+                    <span className="w-1.5 shrink-0" aria-hidden />
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       runAction([m.id], m.starred ? "unstar" : "star");
                     }}
-                    className={m.starred ? "text-amber-400" : "text-zinc-300 dark:text-zinc-700"}
+                    className={m.starred ? "text-seal" : "text-line hover:text-seal-deep"}
                     aria-label="star"
                   >
                     ★
                   </button>
                   <span
                     className={`w-40 shrink-0 truncate text-sm ${
-                      m.unread ? "font-semibold text-zinc-900 dark:text-zinc-50" : "text-zinc-600 dark:text-zinc-400"
+                      m.unread ? "font-semibold text-body" : "text-muted"
                     }`}
                   >
                     {fromName(m.from)}
                   </span>
                   <span className="flex-1 min-w-0 truncate text-sm">
-                    <span
-                      className={
-                        m.unread
-                          ? "font-semibold text-zinc-900 dark:text-zinc-50"
-                          : "text-zinc-700 dark:text-zinc-300"
-                      }
-                    >
+                    <span className={m.unread ? "font-semibold text-body" : "text-muted"}>
                       {m.subject}
                     </span>
-                    <span className="text-zinc-400"> — {m.snippet}</span>
+                    <span className="text-muted"> — {m.snippet}</span>
                   </span>
-                  <span className="w-24 shrink-0 text-right text-xs text-zinc-400">
+                  <span className="w-24 shrink-0 text-right text-xs text-muted">
                     {m.date ? new Date(m.date).toLocaleDateString() : ""}
                   </span>
                 </li>
@@ -321,7 +388,7 @@ export default function InboxClient({
               <button
                 onClick={() => load({ append: true, pageToken: nextPageToken })}
                 disabled={loading}
-                className="text-sm text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 disabled:opacity-40"
+                className="text-sm text-muted hover:text-body disabled:opacity-40"
               >
                 {loading ? "Loading…" : "Load more"}
               </button>

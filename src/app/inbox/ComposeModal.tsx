@@ -60,16 +60,13 @@ export default function ComposeModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
-      <div className="w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl bg-white dark:bg-zinc-950 border border-black/10 dark:border-white/10 shadow-xl flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-black/10 dark:border-white/10">
-          <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-body/30 p-0 sm:p-4">
+      <div className="w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl bg-surface border border-line shadow-xl flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+          <h2 className="font-medium text-body">
             {prefill?.threadId ? "Reply" : "New message"}
           </h2>
-          <button
-            onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
-          >
+          <button onClick={onClose} className="text-muted hover:text-body">
             ✕
           </button>
         </div>
@@ -79,44 +76,42 @@ export default function ComposeModal({
             value={to}
             onChange={(e) => setTo(e.target.value)}
             placeholder="To"
-            className="border-b border-zinc-200 dark:border-zinc-800 bg-transparent py-2 outline-none text-sm text-zinc-900 dark:text-zinc-50"
+            className="border-b border-line bg-transparent py-2 outline-none text-sm text-body placeholder:text-muted"
           />
           <input
             value={cc}
             onChange={(e) => setCc(e.target.value)}
             placeholder="Cc"
-            className="border-b border-zinc-200 dark:border-zinc-800 bg-transparent py-2 outline-none text-sm text-zinc-900 dark:text-zinc-50"
+            className="border-b border-line bg-transparent py-2 outline-none text-sm text-body placeholder:text-muted"
           />
           <input
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
             placeholder="Subject"
-            className="border-b border-zinc-200 dark:border-zinc-800 bg-transparent py-2 outline-none text-sm text-zinc-900 dark:text-zinc-50"
+            className="border-b border-line bg-transparent py-2 outline-none text-sm text-body placeholder:text-muted"
           />
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="Write your message…"
             rows={10}
-            className="bg-transparent py-2 outline-none text-sm resize-none text-zinc-900 dark:text-zinc-50"
+            className="bg-transparent py-2 outline-none text-sm resize-none text-body placeholder:text-muted"
           />
         </div>
 
-        {error && (
-          <p className="px-4 text-sm text-red-600 dark:text-red-400">{error}</p>
-        )}
+        {error && <p className="px-4 text-sm text-seal-deep">{error}</p>}
 
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-black/10 dark:border-white/10">
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-line">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm rounded-lg text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+            className="px-4 py-2 text-sm rounded-full text-muted hover:bg-surface-2"
           >
             Cancel
           </button>
           <button
             onClick={send}
             disabled={!to || sending}
-            className="px-4 py-2 text-sm rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium disabled:opacity-40"
+            className="px-4 py-2 text-sm rounded-full bg-ink hover:bg-ink-deep text-white font-medium disabled:opacity-40 transition-colors"
           >
             {sending ? "Sending…" : "Send"}
           </button>

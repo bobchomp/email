@@ -66,18 +66,14 @@ function UnlockForm() {
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-zinc-50 dark:bg-black px-4">
+    <div className="flex flex-1 items-center justify-center bg-paper px-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-sm rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-zinc-950 p-8 shadow-sm flex flex-col gap-5"
+        className="w-full max-w-sm rounded-2xl border border-line bg-surface p-8 shadow-sm flex flex-col gap-5"
       >
         <div className="text-center">
-          <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
-            Enter PIN
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Unlock to access your mail
-          </p>
+          <h1 className="text-xl font-semibold text-body">Enter PIN</h1>
+          <p className="mt-1 text-sm text-muted">Unlock to access your mail</p>
         </div>
 
         <input
@@ -90,12 +86,12 @@ function UnlockForm() {
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, ""))}
           disabled={lockedSeconds !== null}
-          className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 text-center text-2xl tracking-[0.5em] text-zinc-900 dark:text-zinc-50 outline-none focus:border-zinc-500 disabled:opacity-50"
+          className="w-full rounded-lg border border-line bg-transparent px-4 py-3 text-center text-2xl tracking-[0.5em] text-body outline-none focus:border-ink disabled:opacity-50"
           placeholder="••••••"
         />
 
         {error && (
-          <p className="text-sm text-red-600 dark:text-red-400 text-center">
+          <p className="text-sm text-seal-deep text-center">
             {error}
             {lockedSeconds !== null && (
               <>
@@ -109,7 +105,7 @@ function UnlockForm() {
         <button
           type="submit"
           disabled={submitting || !pin || lockedSeconds !== null}
-          className="w-full rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 py-3 font-medium disabled:opacity-40"
+          className="w-full rounded-full bg-ink text-white py-3 font-medium disabled:opacity-40"
         >
           {submitting ? "Checking…" : "Unlock"}
         </button>
