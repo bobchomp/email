@@ -144,8 +144,11 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
               <iframe
                 sandbox=""
                 srcDoc={m.body.html}
-                className="w-full border-0"
-                style={{ height: 400 }}
+                className={`w-full border-0 ${
+                  m.id === last.id
+                    ? "h-[calc(100dvh_-_220px)] min-h-[280px]"
+                    : "h-[300px]"
+                }`}
               />
             ) : (
               <pre className="whitespace-pre-wrap font-sans text-sm text-body">
