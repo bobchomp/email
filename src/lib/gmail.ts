@@ -146,10 +146,37 @@ function extractBody(part: gmail_v1.Schema$MessagePart | undefined): MessageBody
   return result;
 }
 
+export type Attachment = {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+};
+
+function extractAttachments(part: gmail_v1.Schema$MessagePart | undefined): Attachment[] {
+  const result: Attachment[] = [];
+  if (!part) return result;
+
+  function walk(p: gmail_v1.Schema$MessagePart) {
+    if (p.filename && p.body?.attachmentId) {
+      result.push({
+        attachmentId: p.body.attachmentId,
+        filename: p.filename,
+        mimeType: p.mimeType || "application/octet-stream",
+        size: p.body.size ?? 0,
+      });
+    }
+    for (const child of p.parts ?? []) walk(child);
+  }
+  walk(part);
+  return result;
+}
+
 export type MessageDetail = MessageSummary & {
   to: string;
   cc: string;
   body: MessageBody;
+  attachments: Attachment[];
   messageIdHeader: string;
   references: string;
 };
@@ -176,6 +203,7 @@ export async function getMessage(id: string): Promise<MessageDetail> {
       starred: labelIds.includes("STARRED"),
       labelIds,
       body: extractBody(msg.data.payload),
+      attachments: extractAttachments(msg.data.payload),
       messageIdHeader: header(headers, "Message-ID"),
       references: header(headers, "References"),
     };
@@ -201,10 +229,59 @@ export async function getThread(threadId: string): Promise<MessageDetail[]> {
         starred: labelIds.includes("STARRED"),
         labelIds,
         body: extractBody(msg.payload),
+        attachments: extractAttachments(msg.payload),
         messageIdHeader: header(headers, "Message-ID"),
         references: header(headers, "References"),
       };
     });
+  });
+}
+
+function findAttachmentPart(
+  part: gmail_v1.Schema$MessagePart | undefined,
+  attachmentId: string
+): { filename: string; mimeType: string } | null {
+  if (!part) return null;
+  if (part.body?.attachmentId === attachmentId && part.filename) {
+    return { filename: part.filename, mimeType: part.mimeType || "application/octet-stream" };
+  }
+  for (const child of part.parts ?? []) {
+    const found = findAttachmentPart(child, attachmentId);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Re-reads the message's own parts to get the real filename/mimeType rather
+// than trusting anything the caller passed in, since those end up in
+// response headers (Content-Type / Content-Disposition).
+export async function getAttachment(
+  messageId: string,
+  attachmentId: string
+): Promise<{ data: Buffer; filename: string; mimeType: string }> {
+  return withGmail(async (gmail) => {
+    const msg = await gmail.users.messages.get({
+      userId: "me",
+      id: messageId,
+      format: "full",
+    });
+    const meta = findAttachmentPart(msg.data.payload, attachmentId);
+    if (!meta) {
+      throw new Error("Attachment not found on this message");
+    }
+    const att = await gmail.users.messages.attachments.get({
+      userId: "me",
+      messageId,
+      id: attachmentId,
+    });
+    if (!att.data.data) {
+      throw new Error("Attachment has no data");
+    }
+    return {
+      data: Buffer.from(att.data.data, "base64url"),
+      filename: meta.filename,
+      mimeType: meta.mimeType,
+    };
   });
 }
 
