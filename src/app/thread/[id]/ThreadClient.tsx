@@ -11,6 +11,12 @@ function extractEmail(from: string): string {
   return match ? match[1] : from;
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function ThreadClient({ threadId }: { threadId: string }) {
   const router = useRouter();
   const [messages, setMessages] = useState<MessageDetail[]>([]);
@@ -154,6 +160,36 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
               <pre className="whitespace-pre-wrap font-sans text-sm text-body">
                 {m.body.text || m.snippet}
               </pre>
+            )}
+
+            {m.attachments.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {m.attachments.map((a) => (
+                  <a
+                    key={a.attachmentId}
+                    href={`/api/gmail/messages/${m.id}/attachments/${a.attachmentId}`}
+                    download={a.filename}
+                    className="flex items-center gap-2 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-body hover:bg-ink-soft"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden
+                      className="shrink-0 text-muted"
+                    >
+                      <path d="M21.44 11.05 12.25 20.24a5 5 0 0 1-7.07-7.07l9.19-9.19a3.34 3.34 0 0 1 4.71 4.71l-9.2 9.19a1.67 1.67 0 0 1-2.36-2.36l8.49-8.48" />
+                    </svg>
+                    <span className="truncate max-w-48">{a.filename}</span>
+                    <span className="text-muted text-xs shrink-0">{formatFileSize(a.size)}</span>
+                  </a>
+                ))}
+              </div>
             )}
 
             <button
