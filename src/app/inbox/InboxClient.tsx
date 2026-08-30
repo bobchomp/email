@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MessageSummary, Label } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
@@ -118,6 +118,28 @@ export default function InboxClient({
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder, query]);
+
+  // Infinite scroll: fetch the next page automatically once the sentinel
+  // at the bottom of the list scrolls into view, instead of a manual button.
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const root = scrollContainerRef.current;
+    if (!sentinel || !root || !nextPageToken) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loading) {
+          load({ append: true, pageToken: nextPageToken });
+        }
+      },
+      { root, rootMargin: "400px" }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [nextPageToken, loading, load]);
 
   function toggleSelect(id: string) {
     setSelected((prev) => {
@@ -327,7 +349,7 @@ export default function InboxClient({
           <p className="px-3 py-2 text-sm text-seal-deep">{actionError}</p>
         )}
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
           {loading && messages.length === 0 ? (
             <p className="p-6 text-center text-sm text-muted">Loading…</p>
           ) : messages.length === 0 ? (
@@ -384,14 +406,8 @@ export default function InboxClient({
           )}
 
           {nextPageToken && (
-            <div className="p-4 text-center">
-              <button
-                onClick={() => load({ append: true, pageToken: nextPageToken })}
-                disabled={loading}
-                className="text-sm text-muted hover:text-body disabled:opacity-40"
-              >
-                {loading ? "Loading…" : "Load more"}
-              </button>
+            <div ref={sentinelRef} className="p-4 text-center text-sm text-muted">
+              {loading && messages.length > 0 ? "Loading more…" : ""}
             </div>
           )}
         </div>
