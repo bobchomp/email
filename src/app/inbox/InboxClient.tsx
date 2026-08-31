@@ -165,18 +165,58 @@ export default function InboxClient({
     });
   }
 
-  async function runAction(
-    ids: string[],
-    action:
-      | "markRead"
-      | "markUnread"
-      | "star"
-      | "unstar"
-      | "archive"
-      | "unarchive"
-      | "trash"
-      | "untrash"
-  ) {
+  type RowAction =
+    | "markRead"
+    | "markUnread"
+    | "star"
+    | "unstar"
+    | "archive"
+    | "unarchive"
+    | "trash"
+    | "untrash";
+
+  // Mirrors the label add/remove the API route applies for each action, so
+  // the list can be updated in place instead of doing a full reload (which
+  // also meant losing any extra pages loaded via infinite scroll).
+  const ROW_ACTION_LABEL_CHANGES: Record<RowAction, { add: string[]; remove: string[] }> = {
+    markRead: { add: [], remove: ["UNREAD"] },
+    markUnread: { add: ["UNREAD"], remove: [] },
+    star: { add: ["STARRED"], remove: [] },
+    unstar: { add: [], remove: ["STARRED"] },
+    archive: { add: [], remove: ["INBOX"] },
+    unarchive: { add: ["INBOX"], remove: [] },
+    trash: { add: ["TRASH"], remove: ["INBOX"] },
+    untrash: { add: ["INBOX"], remove: ["TRASH"] },
+  };
+
+  function applyActionLocally(ids: string[], action: RowAction) {
+    const change = ROW_ACTION_LABEL_CHANGES[action];
+    setMessages((prev) =>
+      prev
+        .map((m) => {
+          if (!ids.includes(m.id)) return m;
+          const labelIds = Array.from(
+            new Set([...m.labelIds.filter((l) => !change.remove.includes(l)), ...change.add])
+          );
+          return {
+            ...m,
+            labelIds,
+            unread: labelIds.includes("UNREAD"),
+            starred: labelIds.includes("STARRED"),
+          };
+        })
+        // If the message no longer matches the folder we're viewing (e.g.
+        // archiving it while looking at Inbox), drop it from the list.
+        .filter(
+          (m) =>
+            !ids.includes(m.id) ||
+            !folder.labelIds ||
+            folder.labelIds.every((l) => m.labelIds.includes(l))
+        )
+    );
+  }
+
+  async function runAction(ids: string[], action: RowAction) {
     setActionError(null);
     try {
       await Promise.all(
@@ -188,7 +228,7 @@ export default function InboxClient({
         )
       );
       setSelected(new Set());
-      load();
+      applyActionLocally(ids, action);
     } catch (err) {
       if (err instanceof ReconnectRequiredClientError) {
         setReconnectNeeded(true);
@@ -208,7 +248,7 @@ export default function InboxClient({
         ids.map((id) => apiFetch(`/api/gmail/messages/${id}`, { method: "DELETE" }))
       );
       setSelected(new Set());
-      load();
+      setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
     } catch (err) {
       if (err instanceof ReconnectRequiredClientError) {
         setReconnectNeeded(true);
