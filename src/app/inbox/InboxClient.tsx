@@ -288,6 +288,13 @@ export default function InboxClient({
 
         <div className="mt-auto text-xs text-muted flex flex-col gap-2">
           {accountEmail && <span className="truncate">{accountEmail}</span>}
+          <a
+            href="/api/auth/google/start"
+            title="Re-does Google sign-in now so the ~7-day unverified-app connection doesn't lapse"
+            className="text-left hover:text-body"
+          >
+            Refresh connection
+          </a>
           <button onClick={logout} className="text-left hover:text-body">
             Lock
           </button>
