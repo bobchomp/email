@@ -392,7 +392,17 @@ export default function InboxClient({
                     className="accent-ink"
                   />
                   {m.unread ? (
-                    <span className="h-1.5 w-1.5 rounded-full bg-ink shrink-0" aria-hidden />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        runAction([m.id], "markRead");
+                      }}
+                      className="shrink-0 p-1 -m-1"
+                      aria-label="Mark as read"
+                      title="Mark as read"
+                    >
+                      <span className="block h-1.5 w-1.5 rounded-full bg-ink" />
+                    </button>
                   ) : (
                     <span className="w-1.5 shrink-0" aria-hidden />
                   )}
