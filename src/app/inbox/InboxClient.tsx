@@ -8,6 +8,10 @@ import ComposeModal from "./ComposeModal";
 
 type FolderEntry = { key: string; label: string; labelIds?: string[]; color?: string | null };
 
+// Shared with ThreadClient: lets arrow-key next/previous navigation follow
+// whichever list (folder/search) the message was opened from.
+export const THREAD_ORDER_KEY = "mail:threadOrder";
+
 // Gmail's own sidebar order. "ALL" is synthetic (no labelIds = no filter)
 // and always shown; everything else only shows once we know it actually
 // exists (and isn't hidden) on the connected account.
@@ -118,6 +122,17 @@ export default function InboxClient({
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder, query]);
+
+  // Record the order threads appear in this list so the thread view can
+  // step to the next/previous one with the arrow keys.
+  useEffect(() => {
+    try {
+      const order = Array.from(new Set(messages.map((m) => m.threadId)));
+      sessionStorage.setItem(THREAD_ORDER_KEY, JSON.stringify(order));
+    } catch {
+      // Best-effort — sessionStorage can throw in some private-browsing modes.
+    }
+  }, [messages]);
 
   // Infinite scroll: fetch the next page automatically once the sentinel
   // at the bottom of the list scrolls into view, instead of a manual button.

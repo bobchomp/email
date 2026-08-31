@@ -5,6 +5,16 @@ import { useRouter } from "next/navigation";
 import type { MessageDetail } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
 import ComposeModal, { ComposePrefill } from "../../inbox/ComposeModal";
+import { THREAD_ORDER_KEY } from "../../inbox/InboxClient";
+
+function getThreadOrder(): string[] {
+  try {
+    const raw = sessionStorage.getItem(THREAD_ORDER_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
 
 function extractEmail(from: string): string {
   const match = from.match(/<([^>]+)>/);
@@ -57,6 +67,39 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
+
+  // Left/Right arrow steps to the previous/next thread in whichever list
+  // (folder or search) this one was opened from.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (replyPrefill) return; // reply/compose modal open
+
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      const order = getThreadOrder();
+      const index = order.indexOf(threadId);
+      if (index === -1) return;
+
+      if (e.key === "ArrowLeft" && index > 0) {
+        router.push(`/thread/${order[index - 1]}`);
+      } else if (e.key === "ArrowRight" && index < order.length - 1) {
+        router.push(`/thread/${order[index + 1]}`);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [threadId, replyPrefill, router]);
 
   async function act(id: string, action: "star" | "unstar" | "archive" | "trash") {
     try {
