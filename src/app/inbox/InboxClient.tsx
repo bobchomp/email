@@ -216,8 +216,15 @@ export default function InboxClient({
     );
   }
 
+  // Optimistic: the list updates the instant you click, before Gmail has
+  // confirmed anything. If the background save fails, the snapshot taken
+  // beforehand is restored so the screen never lies about what's actually
+  // in your Gmail account.
   async function runAction(ids: string[], action: RowAction) {
     setActionError(null);
+    const snapshot = messages;
+    applyActionLocally(ids, action);
+    setSelected(new Set());
     try {
       await Promise.all(
         ids.map((id) =>
@@ -227,13 +234,14 @@ export default function InboxClient({
           })
         )
       );
-      setSelected(new Set());
-      applyActionLocally(ids, action);
     } catch (err) {
+      setMessages(snapshot);
       if (err instanceof ReconnectRequiredClientError) {
         setReconnectNeeded(true);
       } else {
-        setActionError(err instanceof Error ? err.message : "Action failed");
+        setActionError(
+          (err instanceof Error ? err.message : "Action failed") + " — change was undone"
+        );
       }
     }
   }
@@ -243,17 +251,21 @@ export default function InboxClient({
       return;
     }
     setActionError(null);
+    const snapshot = messages;
+    setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+    setSelected(new Set());
     try {
       await Promise.all(
         ids.map((id) => apiFetch(`/api/gmail/messages/${id}`, { method: "DELETE" }))
       );
-      setSelected(new Set());
-      setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
     } catch (err) {
+      setMessages(snapshot);
       if (err instanceof ReconnectRequiredClientError) {
         setReconnectNeeded(true);
       } else {
-        setActionError(err instanceof Error ? err.message : "Delete failed");
+        setActionError(
+          (err instanceof Error ? err.message : "Delete failed") + " — change was undone"
+        );
       }
     }
   }
