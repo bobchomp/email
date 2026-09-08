@@ -77,6 +77,12 @@ export function ensureSchema(): Promise<void> {
           CONSTRAINT single_row CHECK (id = 1)
         )
       `;
+      await db`
+        CREATE TABLE IF NOT EXISTS pinned_labels (
+          label_id TEXT PRIMARY KEY,
+          pinned_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
     })();
   }
   return schemaReady;
@@ -158,4 +164,26 @@ export async function savePinAttemptState(state: PinAttemptState): Promise<void>
       last_lockout_seconds = EXCLUDED.last_lockout_seconds,
       updated_at = now()
   `;
+}
+
+export async function getPinnedLabelIds(): Promise<string[]> {
+  await ensureSchema();
+  const db = sql();
+  const rows = await db`SELECT label_id FROM pinned_labels ORDER BY pinned_at ASC`;
+  return (rows as { label_id: string }[]).map((r) => r.label_id);
+}
+
+export async function pinLabel(labelId: string): Promise<void> {
+  await ensureSchema();
+  const db = sql();
+  await db`
+    INSERT INTO pinned_labels (label_id) VALUES (${labelId})
+    ON CONFLICT (label_id) DO NOTHING
+  `;
+}
+
+export async function unpinLabel(labelId: string): Promise<void> {
+  await ensureSchema();
+  const db = sql();
+  await db`DELETE FROM pinned_labels WHERE label_id = ${labelId}`;
 }
