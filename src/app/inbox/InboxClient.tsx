@@ -48,6 +48,7 @@ export default function InboxClient({
   });
   const [labels, setLabels] = useState<Label[]>([]);
   const [labelsLoaded, setLabelsLoaded] = useState(false);
+  const [pinnedIds, setPinnedIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [messages, setMessages] = useState<MessageSummary[]>([]);
@@ -68,7 +69,25 @@ export default function InboxClient({
         if (err instanceof ReconnectRequiredClientError) setReconnectNeeded(true);
         setLabelsLoaded(true);
       });
+
+    apiFetch<{ labelIds: string[] }>("/api/pinned-labels")
+      .then((data) => setPinnedIds(data.labelIds))
+      .catch(() => {
+        // Non-critical — pinning just won't reflect until next load.
+      });
   }, []);
+
+  async function togglePin(labelId: string, pinned: boolean) {
+    setActionError(null);
+    const snapshot = pinnedIds;
+    setPinnedIds((prev) => (pinned ? prev.filter((id) => id !== labelId) : [...prev, labelId]));
+    try {
+      await apiFetch(`/api/pinned-labels/${labelId}`, { method: pinned ? "DELETE" : "PUT" });
+    } catch {
+      setPinnedIds(snapshot);
+      setActionError("Couldn't save that pin — change was undone");
+    }
+  }
 
   const systemFolders: FolderEntry[] = SYSTEM_LABEL_ORDER.filter(
     (s) =>
@@ -80,8 +99,15 @@ export default function InboxClient({
     labelIds: s.id === "ALL" ? undefined : [s.id],
   }));
 
-  const userLabels: FolderEntry[] = labels
-    .filter((l) => l.type === "user")
+  const userLabelObjects = labels.filter((l) => l.type === "user");
+
+  const pinnedLabels: FolderEntry[] = pinnedIds
+    .map((id) => userLabelObjects.find((l) => l.id === id))
+    .filter((l): l is Label => !!l)
+    .map((l) => ({ key: l.id, label: l.name, labelIds: [l.id], color: l.color }));
+
+  const userLabels: FolderEntry[] = userLabelObjects
+    .filter((l) => !pinnedIds.includes(l.id))
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((l) => ({ key: l.id, label: l.name, labelIds: [l.id], color: l.color }));
 
@@ -297,25 +323,64 @@ export default function InboxClient({
     );
   }
 
-  function NavButton({ f }: { f: FolderEntry }) {
+  function PinIcon({ filled }: { filled?: boolean }) {
+    return (
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        fill={filled ? "currentColor" : "none"}
+        aria-hidden
+      >
+        <circle cx="12" cy="9" r="4" />
+        <line x1="12" y1="13" x2="12" y2="21" />
+      </svg>
+    );
+  }
+
+  // `pinned` is only passed for user labels (Pinned/Labels sections), which
+  // is what shows the pin/unpin control — system folders never get one.
+  function NavButton({ f, pinned }: { f: FolderEntry; pinned?: boolean }) {
     const isActive = folder.key === f.key;
     return (
-      <button
-        onClick={() => setFolder(f)}
-        className={`flex items-center gap-2.5 text-left px-3 py-2 rounded-lg text-sm truncate ${
+      <div
+        className={`group flex items-center rounded-lg text-sm ${
           isActive
             ? "bg-white text-ink-deep font-medium shadow-sm"
             : "text-muted hover:bg-white/60 hover:text-body"
         }`}
       >
-        {f.color !== undefined && (
-          <span
-            className="h-2 w-2 rounded-full shrink-0"
-            style={{ background: f.color ?? "var(--color-line)" }}
-          />
+        <button
+          onClick={() => setFolder(f)}
+          className="flex items-center gap-2.5 flex-1 min-w-0 text-left px-3 py-2 truncate"
+        >
+          {f.color !== undefined && (
+            <span
+              className="h-2 w-2 rounded-full shrink-0"
+              style={{ background: f.color ?? "var(--color-line)" }}
+            />
+          )}
+          <span className="truncate">{f.label}</span>
+        </button>
+        {pinned !== undefined && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePin(f.key, pinned);
+            }}
+            className={`shrink-0 pr-2.5 text-muted hover:text-ink-deep ${
+              pinned ? "" : "opacity-0 group-hover:opacity-100"
+            }`}
+            aria-label={pinned ? "Unpin label" : "Pin label to top"}
+            title={pinned ? "Unpin" : "Pin to top"}
+          >
+            <PinIcon filled={pinned} />
+          </button>
         )}
-        <span className="truncate">{f.label}</span>
-      </button>
+      </div>
     );
   }
 
@@ -340,6 +405,19 @@ export default function InboxClient({
           ))}
         </nav>
 
+        {pinnedLabels.length > 0 && (
+          <div>
+            <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-wide text-muted">
+              Pinned
+            </p>
+            <nav className="flex flex-col gap-1">
+              {pinnedLabels.map((f) => (
+                <NavButton key={f.key} f={f} pinned />
+              ))}
+            </nav>
+          </div>
+        )}
+
         {userLabels.length > 0 && (
           <div>
             <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-wide text-muted">
@@ -347,7 +425,7 @@ export default function InboxClient({
             </p>
             <nav className="flex flex-col gap-1">
               {userLabels.map((f) => (
-                <NavButton key={f.key} f={f} />
+                <NavButton key={f.key} f={f} pinned={false} />
               ))}
             </nav>
           </div>
