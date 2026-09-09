@@ -13,5 +13,5 @@ export default async function ThreadPage({
   if (!account) redirect("/connect");
 
   const { id } = await params;
-  return <ThreadClient threadId={id} />;
+  return <ThreadClient threadId={id} accountEmail={account.email} />;
 }
