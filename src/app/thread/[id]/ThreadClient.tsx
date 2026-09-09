@@ -153,6 +153,8 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
   }
 
   const last = messages[messages.length - 1];
+  // Gmail's API returns a thread oldest-first; show newest-first instead.
+  const displayMessages = [...messages].reverse();
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-paper">
@@ -193,7 +195,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-        {messages.map((m) => (
+        {displayMessages.map((m) => (
           <div key={m.id} className="rounded-xl border border-line bg-surface p-4">
             <div className="flex items-baseline justify-between gap-2 mb-2">
               <div className="min-w-0">
