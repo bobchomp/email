@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MessageDetail } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
-import ComposeModal, { ComposePrefill } from "../../inbox/ComposeModal";
 import { THREAD_ORDER_KEY } from "../../inbox/InboxClient";
+import InlineComposer from "./InlineComposer";
+import { buildRecipients, type ComposeMode } from "@/lib/reply-compose";
 
 function getThreadOrder(): string[] {
   try {
@@ -32,23 +33,27 @@ function makeLinksOpenInNewTab(html: string): string {
   });
 }
 
-function extractEmail(from: string): string {
-  const match = from.match(/<([^>]+)>/);
-  return match ? match[1] : from;
-}
-
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function ThreadClient({ threadId }: { threadId: string }) {
+export default function ThreadClient({
+  threadId,
+  accountEmail,
+}: {
+  threadId: string;
+  accountEmail: string | null;
+}) {
   const router = useRouter();
   const [messages, setMessages] = useState<MessageDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [replyPrefill, setReplyPrefill] = useState<ComposePrefill | null>(null);
+  const [composerFor, setComposerFor] = useState<{
+    messageId: string;
+    mode: ComposeMode;
+  } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -90,7 +95,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-      if (replyPrefill) return; // reply/compose modal open
+      if (composerFor) return; // reply/forward composer open
 
       const target = e.target as HTMLElement | null;
       if (
@@ -115,7 +120,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [threadId, replyPrefill, router]);
+  }, [threadId, composerFor, router]);
 
   async function act(id: string, action: "star" | "unstar" | "archive" | "trash") {
     try {
@@ -135,15 +140,6 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     }
   }
 
-  function openReply(m: MessageDetail) {
-    setReplyPrefill({
-      to: extractEmail(m.from),
-      subject: m.subject.startsWith("Re:") ? m.subject : `Re: ${m.subject}`,
-      threadId: m.threadId,
-      inReplyTo: m.messageIdHeader,
-      references: [m.references, m.messageIdHeader].filter(Boolean).join(" "),
-    });
-  }
 
   if (loading) {
     return <p className="p-6 text-center text-sm text-muted">Loading…</p>;
@@ -158,14 +154,6 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-paper">
-      {replyPrefill && (
-        <ComposeModal
-          prefill={replyPrefill}
-          onClose={() => setReplyPrefill(null)}
-          onSent={load}
-        />
-      )}
-
       <div className="flex items-center gap-3 p-3 border-b border-line bg-surface">
         <button
           onClick={() => router.push("/inbox")}
@@ -253,12 +241,38 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
               </div>
             )}
 
-            <button
-              onClick={() => openReply(m)}
-              className="mt-3 text-sm text-ink hover:text-ink-deep font-medium"
-            >
-              Reply
-            </button>
+            <div className="mt-3 flex gap-4 text-sm">
+              <button
+                onClick={() => setComposerFor({ messageId: m.id, mode: "reply" })}
+                className="text-ink hover:text-ink-deep font-medium"
+              >
+                Reply
+              </button>
+              {buildRecipients("replyAll", m, accountEmail).cc && (
+                <button
+                  onClick={() => setComposerFor({ messageId: m.id, mode: "replyAll" })}
+                  className="text-ink hover:text-ink-deep font-medium"
+                >
+                  Reply all
+                </button>
+              )}
+              <button
+                onClick={() => setComposerFor({ messageId: m.id, mode: "forward" })}
+                className="text-ink hover:text-ink-deep font-medium"
+              >
+                Forward
+              </button>
+            </div>
+
+            {composerFor?.messageId === m.id && (
+              <InlineComposer
+                mode={composerFor.mode}
+                message={m}
+                selfEmail={accountEmail}
+                onClose={() => setComposerFor(null)}
+                onSent={load}
+              />
+            )}
           </div>
         ))}
       </div>
