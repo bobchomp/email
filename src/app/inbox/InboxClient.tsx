@@ -68,6 +68,7 @@ export default function InboxClient({
   const [composeOpen, setComposeOpen] = useState(false);
   const [reconnectNeeded, setReconnectNeeded] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
 
   // Mirrors `messages` for use inside load(), which is a useCallback that
   // doesn't depend on (and so would otherwise close over a stale) messages —
@@ -356,6 +357,17 @@ export default function InboxClient({
     window.location.href = "/unlock";
   }
 
+  // Shows a blocking spinner for a manual Refresh click specifically —
+  // the periodic 60s background refresh stays silent on purpose.
+  async function handleManualRefresh() {
+    setManualRefreshing(true);
+    try {
+      await load({ force: true });
+    } finally {
+      setManualRefreshing(false);
+    }
+  }
+
   if (reconnectNeeded) {
     return (
       <div className="flex flex-1 items-center justify-center bg-paper px-4">
@@ -445,6 +457,15 @@ export default function InboxClient({
         <ComposeModal onClose={() => setComposeOpen(false)} onSent={() => load({ force: true })} />
       )}
 
+      {manualRefreshing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-body/20">
+          <div className="rounded-2xl bg-surface border border-line shadow-xl px-6 py-5 flex flex-col items-center gap-3">
+            <div className="h-6 w-6 rounded-full border-2 border-line border-t-ink animate-spin" />
+            <p className="text-sm text-body">Refreshing inbox…</p>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar */}
       <aside className="w-56 shrink-0 bg-surface-2 flex flex-col p-4 gap-4 overflow-y-auto">
         <button
@@ -519,8 +540,9 @@ export default function InboxClient({
             />
           </form>
           <button
-            onClick={() => load({ force: true })}
-            className="text-sm text-muted hover:text-body"
+            onClick={handleManualRefresh}
+            disabled={manualRefreshing}
+            className="text-sm text-muted hover:text-body disabled:opacity-50"
           >
             Refresh
           </button>
