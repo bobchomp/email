@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
+import LoadingOverlay from "@/components/LoadingOverlay";
 
 export type ComposePrefill = {
   to?: string;
@@ -61,6 +62,8 @@ export default function ComposeModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-body/30 p-0 sm:p-4">
+      {sending && <LoadingOverlay message="Sending…" />}
+
       <div className="w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl bg-surface border border-line shadow-xl flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between px-4 py-3 border-b border-line">
           <h2 className="font-medium text-body">

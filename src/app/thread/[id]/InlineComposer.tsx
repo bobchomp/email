@@ -10,6 +10,7 @@ import {
   forwardBody,
   type ComposeMode,
 } from "@/lib/reply-compose";
+import LoadingOverlay from "@/components/LoadingOverlay";
 
 const MODE_LABEL: Record<ComposeMode, string> = {
   reply: "Reply",
@@ -85,6 +86,8 @@ export default function InlineComposer({
 
   return (
     <div className="mt-3 rounded-xl border border-line bg-surface-2 p-3 flex flex-col gap-2">
+      {sending && <LoadingOverlay message="Sending…" />}
+
       <p className="text-xs font-semibold uppercase tracking-wide text-muted">
         {MODE_LABEL[mode]}
       </p>

@@ -15,6 +15,7 @@ import {
   MESSAGES_MAX_AGE_MS,
 } from "@/lib/inbox-cache";
 import ComposeModal from "./ComposeModal";
+import LoadingOverlay from "@/components/LoadingOverlay";
 
 type FolderEntry = { key: string; label: string; labelIds?: string[]; color?: string | null };
 
@@ -78,6 +79,11 @@ export default function InboxClient({
     messagesRef.current = messages;
   }, [messages]);
 
+  // Infinite-scroll pages (inline "Loading more…" text at the bottom) and
+  // the silent periodic background refresh stay popup-free on purpose —
+  // everything else that sets `loading` gets the popup.
+  const [suppressPopup, setSuppressPopup] = useState(false);
+
   useEffect(() => {
     const cachedLabels = getCachedLabels();
     if (cachedLabels && isFresh(cachedLabels.fetchedAt)) {
@@ -139,7 +145,9 @@ export default function InboxClient({
     .map((l) => ({ key: l.id, label: l.name, labelIds: [l.id], color: l.color }));
 
   const load = useCallback(
-    async (opts: { append?: boolean; pageToken?: string; force?: boolean } = {}) => {
+    async (
+      opts: { append?: boolean; pageToken?: string; force?: boolean; silent?: boolean } = {}
+    ) => {
       const cacheKey = messagesCacheKey(folder.labelIds, query);
 
       if (!opts.append && !opts.force) {
@@ -152,6 +160,7 @@ export default function InboxClient({
         }
       }
 
+      setSuppressPopup(!!opts.append || !!opts.silent);
       setLoading(true);
       if (!opts.append) setSelected(new Set());
       try {
@@ -192,7 +201,7 @@ export default function InboxClient({
   // cadence the cache considers fresh, rather than only refetching whenever
   // the folder/search changes.
   useEffect(() => {
-    const interval = setInterval(() => load({ force: true }), MESSAGES_MAX_AGE_MS);
+    const interval = setInterval(() => load({ force: true, silent: true }), MESSAGES_MAX_AGE_MS);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -457,13 +466,16 @@ export default function InboxClient({
         <ComposeModal onClose={() => setComposeOpen(false)} onSent={() => load({ force: true })} />
       )}
 
-      {manualRefreshing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-body/20">
-          <div className="rounded-2xl bg-surface border border-line shadow-xl px-6 py-5 flex flex-col items-center gap-3">
-            <div className="h-6 w-6 rounded-full border-2 border-line border-t-ink animate-spin" />
-            <p className="text-sm text-body">Refreshing inbox…</p>
-          </div>
-        </div>
+      {loading && !suppressPopup && (
+        <LoadingOverlay
+          message={
+            manualRefreshing
+              ? "Refreshing inbox…"
+              : messages.length === 0
+                ? "Loading inbox…"
+                : "Loading…"
+          }
+        />
       )}
 
       {/* Sidebar */}
@@ -579,9 +591,7 @@ export default function InboxClient({
         )}
 
         <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
-          {loading && messages.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted">Loading…</p>
-          ) : messages.length === 0 ? (
+          {messages.length === 0 && loading ? null : messages.length === 0 ? (
             <p className="p-6 text-center text-sm text-muted">No messages</p>
           ) : (
             <ul>
