@@ -4,6 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MessageSummary, Label } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
+import {
+  getCachedLabels,
+  setCachedLabels,
+  getCachedMessages,
+  setCachedMessages,
+  patchCachedMessages,
+  messagesCacheKey,
+  isFresh,
+  MESSAGES_MAX_AGE_MS,
+} from "@/lib/inbox-cache";
 import ComposeModal from "./ComposeModal";
 
 type FolderEntry = { key: string; label: string; labelIds?: string[]; color?: string | null };
@@ -58,17 +68,34 @@ export default function InboxClient({
   const [composeOpen, setComposeOpen] = useState(false);
   const [reconnectNeeded, setReconnectNeeded] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+
+  // Mirrors `messages` for use inside load(), which is a useCallback that
+  // doesn't depend on (and so would otherwise close over a stale) messages —
+  // needed to merge an infinite-scroll page onto the existing list.
+  const messagesRef = useRef<MessageSummary[]>([]);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
-    apiFetch<{ labels: Label[] }>("/api/gmail/labels")
-      .then((data) => {
-        setLabels(data.labels);
-        setLabelsLoaded(true);
-      })
-      .catch((err) => {
-        if (err instanceof ReconnectRequiredClientError) setReconnectNeeded(true);
-        setLabelsLoaded(true);
-      });
+    const cachedLabels = getCachedLabels();
+    if (cachedLabels && isFresh(cachedLabels.fetchedAt)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional cache-hit fast path
+      setLabels(cachedLabels.labels);
+      setLabelsLoaded(true);
+    } else {
+      apiFetch<{ labels: Label[] }>("/api/gmail/labels")
+        .then((data) => {
+          setLabels(data.labels);
+          setLabelsLoaded(true);
+          setCachedLabels(data.labels);
+        })
+        .catch((err) => {
+          if (err instanceof ReconnectRequiredClientError) setReconnectNeeded(true);
+          setLabelsLoaded(true);
+        });
+    }
 
     apiFetch<{ labelIds: string[] }>("/api/pinned-labels")
       .then((data) => setPinnedIds(data.labelIds))
@@ -112,7 +139,19 @@ export default function InboxClient({
     .map((l) => ({ key: l.id, label: l.name, labelIds: [l.id], color: l.color }));
 
   const load = useCallback(
-    async (opts: { append?: boolean; pageToken?: string } = {}) => {
+    async (opts: { append?: boolean; pageToken?: string; force?: boolean } = {}) => {
+      const cacheKey = messagesCacheKey(folder.labelIds, query);
+
+      if (!opts.append && !opts.force) {
+        const cached = getCachedMessages(cacheKey);
+        if (cached && isFresh(cached.fetchedAt)) {
+          setMessages(cached.messages);
+          setNextPageToken(cached.nextPageToken);
+          setLoading(false);
+          return;
+        }
+      }
+
       setLoading(true);
       if (!opts.append) setSelected(new Set());
       try {
@@ -126,10 +165,10 @@ export default function InboxClient({
           nextPageToken?: string;
         }>(`/api/gmail/messages?${params.toString()}`);
 
-        setMessages((prev) =>
-          opts.append ? [...prev, ...data.messages] : data.messages
-        );
+        const merged = opts.append ? [...messagesRef.current, ...data.messages] : data.messages;
+        setMessages(merged);
         setNextPageToken(data.nextPageToken);
+        setCachedMessages(cacheKey, { messages: merged, nextPageToken: data.nextPageToken });
       } catch (err) {
         if (err instanceof ReconnectRequiredClientError) {
           setReconnectNeeded(true);
@@ -148,6 +187,14 @@ export default function InboxClient({
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder, query]);
+
+  // Keep the list current in the background while it's open, on the same
+  // cadence the cache considers fresh, rather than only refetching whenever
+  // the folder/search changes.
+  useEffect(() => {
+    const interval = setInterval(() => load({ force: true }), MESSAGES_MAX_AGE_MS);
+    return () => clearInterval(interval);
+  }, [load]);
 
   // Record the order threads appear in this list so the thread view can
   // step to the next/previous one with the arrow keys.
@@ -215,31 +262,40 @@ export default function InboxClient({
     untrash: { add: ["INBOX"], remove: ["TRASH"] },
   };
 
+  // Keeps `messages` state and the sessionStorage cache in sync for any
+  // local (non-load()) edit — optimistic action or rollback.
+  function updateMessagesAndCache(next: MessageSummary[]) {
+    setMessages(next);
+    patchCachedMessages(messagesCacheKey(folder.labelIds, query), {
+      messages: next,
+      nextPageToken,
+    });
+  }
+
   function applyActionLocally(ids: string[], action: RowAction) {
     const change = ROW_ACTION_LABEL_CHANGES[action];
-    setMessages((prev) =>
-      prev
-        .map((m) => {
-          if (!ids.includes(m.id)) return m;
-          const labelIds = Array.from(
-            new Set([...m.labelIds.filter((l) => !change.remove.includes(l)), ...change.add])
-          );
-          return {
-            ...m,
-            labelIds,
-            unread: labelIds.includes("UNREAD"),
-            starred: labelIds.includes("STARRED"),
-          };
-        })
-        // If the message no longer matches the folder we're viewing (e.g.
-        // archiving it while looking at Inbox), drop it from the list.
-        .filter(
-          (m) =>
-            !ids.includes(m.id) ||
-            !folder.labelIds ||
-            folder.labelIds.every((l) => m.labelIds.includes(l))
-        )
-    );
+    const next = messages
+      .map((m) => {
+        if (!ids.includes(m.id)) return m;
+        const labelIds = Array.from(
+          new Set([...m.labelIds.filter((l) => !change.remove.includes(l)), ...change.add])
+        );
+        return {
+          ...m,
+          labelIds,
+          unread: labelIds.includes("UNREAD"),
+          starred: labelIds.includes("STARRED"),
+        };
+      })
+      // If the message no longer matches the folder we're viewing (e.g.
+      // archiving it while looking at Inbox), drop it from the list.
+      .filter(
+        (m) =>
+          !ids.includes(m.id) ||
+          !folder.labelIds ||
+          folder.labelIds.every((l) => m.labelIds.includes(l))
+      );
+    updateMessagesAndCache(next);
   }
 
   // Optimistic: the list updates the instant you click, before Gmail has
@@ -261,7 +317,7 @@ export default function InboxClient({
         )
       );
     } catch (err) {
-      setMessages(snapshot);
+      updateMessagesAndCache(snapshot);
       if (err instanceof ReconnectRequiredClientError) {
         setReconnectNeeded(true);
       } else {
@@ -278,14 +334,14 @@ export default function InboxClient({
     }
     setActionError(null);
     const snapshot = messages;
-    setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+    updateMessagesAndCache(messages.filter((m) => !ids.includes(m.id)));
     setSelected(new Set());
     try {
       await Promise.all(
         ids.map((id) => apiFetch(`/api/gmail/messages/${id}`, { method: "DELETE" }))
       );
     } catch (err) {
-      setMessages(snapshot);
+      updateMessagesAndCache(snapshot);
       if (err instanceof ReconnectRequiredClientError) {
         setReconnectNeeded(true);
       } else {
@@ -299,6 +355,17 @@ export default function InboxClient({
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/unlock";
+  }
+
+  // Shows a blocking spinner for a manual Refresh click specifically —
+  // the periodic 60s background refresh stays silent on purpose.
+  async function handleManualRefresh() {
+    setManualRefreshing(true);
+    try {
+      await load({ force: true });
+    } finally {
+      setManualRefreshing(false);
+    }
   }
 
   if (reconnectNeeded) {
@@ -387,7 +454,16 @@ export default function InboxClient({
   return (
     <div className="flex flex-1 min-h-0 bg-paper">
       {composeOpen && (
-        <ComposeModal onClose={() => setComposeOpen(false)} onSent={() => load()} />
+        <ComposeModal onClose={() => setComposeOpen(false)} onSent={() => load({ force: true })} />
+      )}
+
+      {manualRefreshing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-body/20">
+          <div className="rounded-2xl bg-surface border border-line shadow-xl px-6 py-5 flex flex-col items-center gap-3">
+            <div className="h-6 w-6 rounded-full border-2 border-line border-t-ink animate-spin" />
+            <p className="text-sm text-body">Refreshing inbox…</p>
+          </div>
+        </div>
       )}
 
       {/* Sidebar */}
@@ -464,8 +540,9 @@ export default function InboxClient({
             />
           </form>
           <button
-            onClick={() => load()}
-            className="text-sm text-muted hover:text-body"
+            onClick={handleManualRefresh}
+            disabled={manualRefreshing}
+            className="text-sm text-muted hover:text-body disabled:opacity-50"
           >
             Refresh
           </button>
