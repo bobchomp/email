@@ -7,6 +7,7 @@ import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
 import { THREAD_ORDER_KEY } from "../../inbox/InboxClient";
 import InlineComposer from "./InlineComposer";
 import { buildRecipients, type ComposeMode } from "@/lib/reply-compose";
+import LoadingOverlay from "@/components/LoadingOverlay";
 
 function getThreadOrder(): string[] {
   try {
@@ -141,8 +142,12 @@ export default function ThreadClient({
   }
 
 
-  if (loading) {
-    return <p className="p-6 text-center text-sm text-muted">Loading…</p>;
+  if (loading && messages.length === 0) {
+    return (
+      <div className="flex-1 min-h-0 bg-paper">
+        <LoadingOverlay message="Loading thread…" />
+      </div>
+    );
   }
   if (error) {
     return <p className="p-6 text-center text-sm text-seal-deep">{error}</p>;
@@ -154,6 +159,8 @@ export default function ThreadClient({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-paper">
+      {loading && <LoadingOverlay message="Loading…" />}
+
       <div className="flex items-center gap-3 p-3 border-b border-line bg-surface">
         <button
           onClick={() => router.push("/inbox")}
