@@ -439,7 +439,7 @@ export default function InboxClient({
               style={{ background: f.color ?? "var(--color-line)" }}
             />
           )}
-          <span className="truncate">{f.label}</span>
+          <span className="min-w-0 truncate">{f.label}</span>
         </button>
         {pinned !== undefined && (
           <button
