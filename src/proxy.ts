@@ -6,6 +6,9 @@ import { SESSION_COOKIE } from "./lib/constants";
 // /connect and the Google OAuth start/callback — requires the PIN first.
 const PUBLIC_PATHS = new Set(["/unlock", "/api/auth/pin"]);
 
+// Tab/home-screen icons must load on the lock screen too.
+const ICON_PATHS = new Set(["/favicon.ico", "/icon.svg", "/apple-icon.png"]);
+
 async function hasValidSession(req: NextRequest): Promise<boolean> {
   const token = req.cookies.get(SESSION_COOKIE)?.value;
   if (!token) return false;
@@ -25,7 +28,7 @@ export async function proxy(req: NextRequest) {
   if (
     PUBLIC_PATHS.has(pathname) ||
     pathname.startsWith("/_next") ||
-    pathname === "/favicon.ico"
+    ICON_PATHS.has(pathname)
   ) {
     return NextResponse.next();
   }
@@ -46,6 +49,6 @@ export async function proxy(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png).*)",
   ],
 };
