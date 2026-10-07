@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { gmail_v1, google } from "googleapis";
-import { getGoogleAccount } from "./db";
+import { deleteUploads, getGoogleAccount, readUpload } from "./db";
+import { MAX_ATTACHMENT_BYTES } from "./upload-limits";
 import { decryptSecret } from "./crypto";
 import { buildMimeMessage, type OutgoingAttachment, type OutgoingMessage } from "./mime";
 import {
@@ -321,10 +322,6 @@ export async function sendMessage(
   );
 }
 
-// Gmail's limit for attachments; the encoded message (~1.37x) then stays
-// under its 35MB total-size limit.
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-
 export type ComposeRequest = {
   to: string;
   cc?: string;
@@ -333,7 +330,11 @@ export type ComposeRequest = {
   // The newly written part only — never the quoted original.
   html?: string;
   text?: string;
-  attachments?: OutgoingAttachment[];
+  // Files uploaded from the composer (see /api/uploads).
+  uploadIds?: string[];
+  // Images pasted into the editor, uploaded the same way; the HTML refers
+  // to each as `cid:<uploadId>@inline`.
+  inlineUploadIds?: string[];
   quote?: {
     messageId: string;
     mode: QuoteMode;
@@ -351,7 +352,19 @@ export type ComposeRequest = {
 export async function composeAndSend(req: ComposeRequest): Promise<void> {
   const newHtml = req.html || (req.text ? textToHtml(req.text) : "");
   const newText = req.html ? htmlToPlainText(req.html) : (req.text ?? "");
-  const attachments: OutgoingAttachment[] = [...(req.attachments ?? [])];
+  const attachments: OutgoingAttachment[] = [];
+  const uploadIds = [...(req.uploadIds ?? []), ...(req.inlineUploadIds ?? [])];
+  for (const id of uploadIds) {
+    const upload = await readUpload(id);
+    if (!upload) throw new Error("An attachment didn't finish uploading — try attaching it again");
+    const inline = req.inlineUploadIds?.includes(id);
+    attachments.push({
+      filename: upload.filename,
+      contentType: upload.contentType,
+      content: upload.data,
+      cid: inline ? `${id}@inline` : undefined,
+    });
+  }
 
   let html = `<div dir="ltr">${newHtml}</div>`;
   let text = newText;
@@ -424,6 +437,10 @@ export async function composeAndSend(req: ComposeRequest): Promise<void> {
     threadId,
     inReplyTo,
     references,
+  });
+
+  await deleteUploads(uploadIds).catch(() => {
+    // Leftovers are purged after a day anyway — the send itself succeeded.
   });
 }
 

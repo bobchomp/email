@@ -2,10 +2,23 @@ import { NextRequest } from "next/server";
 import { composeAndSend, type ComposeRequest } from "@/lib/gmail";
 import { withGmailErrorHandling } from "@/lib/api-helpers";
 
+// Fetching an original's attachments and uploading up to 25MB to Gmail can
+// take a while.
+export const maxDuration = 60;
+
 const QUOTE_MODES = new Set(["reply", "replyAll", "forward"]);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function optionalString(v: unknown): string | undefined {
   return typeof v === "string" && v ? v : undefined;
+}
+
+function uploadIdList(v: unknown): string[] | undefined {
+  if (v === undefined) return undefined;
+  if (!Array.isArray(v) || v.length > 100 || !v.every((id) => typeof id === "string" && UUID.test(id))) {
+    throw new Error("Invalid attachments");
+  }
+  return v as string[];
 }
 
 function parseRequest(body: Record<string, unknown>): ComposeRequest {
@@ -27,7 +40,9 @@ function parseRequest(body: Record<string, unknown>): ComposeRequest {
 
   const html = optionalString(body.html);
   const text = optionalString(body.text);
-  if (!html && !text && !quote) throw new Error("Message is empty");
+  const uploadIds = uploadIdList(body.uploadIds);
+  const inlineUploadIds = uploadIdList(body.inlineUploadIds);
+  if (!html && !text && !quote && !uploadIds?.length) throw new Error("Message is empty");
 
   return {
     to,
@@ -36,6 +51,8 @@ function parseRequest(body: Record<string, unknown>): ComposeRequest {
     subject: typeof body.subject === "string" ? body.subject : "",
     html,
     text,
+    uploadIds,
+    inlineUploadIds,
     quote,
     timeZone: optionalString(body.timeZone),
   };

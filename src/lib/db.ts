@@ -83,6 +83,26 @@ export function ensureSchema(): Promise<void> {
           pinned_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `;
+      // Files attached in the composer, held only until the message is sent
+      // (or for a day if it never is). Stored in chunks because a single
+      // request to a Vercel function is capped at 4.5MB.
+      await db`
+        CREATE TABLE IF NOT EXISTS uploads (
+          id UUID PRIMARY KEY,
+          filename TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          size INT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
+      await db`
+        CREATE TABLE IF NOT EXISTS upload_chunks (
+          upload_id UUID NOT NULL REFERENCES uploads(id) ON DELETE CASCADE,
+          idx INT NOT NULL,
+          data BYTEA NOT NULL,
+          PRIMARY KEY (upload_id, idx)
+        )
+      `;
     })();
   }
   return schemaReady;
@@ -186,4 +206,56 @@ export async function unpinLabel(labelId: string): Promise<void> {
   await ensureSchema();
   const db = sql();
   await db`DELETE FROM pinned_labels WHERE label_id = ${labelId}`;
+}
+
+export type UploadMeta = { id: string; filename: string; contentType: string; size: number };
+
+export async function createUpload(meta: UploadMeta): Promise<void> {
+  await ensureSchema();
+  const db = sql();
+  await db`DELETE FROM uploads WHERE created_at < now() - interval '1 day'`;
+  await db`
+    INSERT INTO uploads (id, filename, content_type, size)
+    VALUES (${meta.id}, ${meta.filename}, ${meta.contentType}, ${meta.size})
+  `;
+}
+
+export async function getUploadMeta(id: string): Promise<UploadMeta | null> {
+  await ensureSchema();
+  const db = sql();
+  const rows = (await db`
+    SELECT id, filename, content_type, size FROM uploads WHERE id = ${id}
+  `) as { id: string; filename: string; content_type: string; size: number }[];
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  return { id: r.id, filename: r.filename, contentType: r.content_type, size: r.size };
+}
+
+export async function putUploadChunk(id: string, idx: number, data: Buffer): Promise<void> {
+  await ensureSchema();
+  const db = sql();
+  await db`
+    INSERT INTO upload_chunks (upload_id, idx, data) VALUES (${id}, ${idx}, ${data})
+    ON CONFLICT (upload_id, idx) DO UPDATE SET data = EXCLUDED.data
+  `;
+}
+
+// Reassembles a finished upload; null if it doesn't exist or isn't complete.
+export async function readUpload(id: string): Promise<(UploadMeta & { data: Buffer }) | null> {
+  const meta = await getUploadMeta(id);
+  if (!meta) return null;
+  const db = sql();
+  const rows = (await db`
+    SELECT data FROM upload_chunks WHERE upload_id = ${id} ORDER BY idx ASC
+  `) as { data: Buffer }[];
+  const data = Buffer.concat(rows.map((r) => r.data));
+  if (data.length !== meta.size) return null;
+  return { ...meta, data };
+}
+
+export async function deleteUploads(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await ensureSchema();
+  const db = sql();
+  await db`DELETE FROM uploads WHERE id = ANY(${ids}::uuid[])`;
 }
