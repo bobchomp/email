@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { gmail_v1, google } from "googleapis";
 import { getGoogleAccount } from "./db";
 import { decryptSecret } from "./crypto";
+import { buildMimeMessage, type OutgoingMessage } from "./mime";
 import {
   createOAuthClient,
   isReconnectRequiredError,
@@ -334,58 +337,27 @@ export async function listLabels(): Promise<Label[]> {
   });
 }
 
-function encodeHeaderValue(value: string): string {
-  // Encode non-ASCII header values (RFC 2047) so subjects/names with
-  // special characters survive the raw MIME message.
-  if (/^[\x00-\x7F]*$/.test(value)) return value;
-  return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
-}
-
-function buildRawMessage(opts: {
-  to: string;
-  cc?: string;
-  bcc?: string;
-  subject: string;
-  body: string;
-  inReplyTo?: string;
-  references?: string;
-}): string {
-  const lines: string[] = [];
-  lines.push(`To: ${opts.to}`);
-  if (opts.cc) lines.push(`Cc: ${opts.cc}`);
-  if (opts.bcc) lines.push(`Bcc: ${opts.bcc}`);
-  lines.push(`Subject: ${encodeHeaderValue(opts.subject)}`);
-  lines.push(`MIME-Version: 1.0`);
-  lines.push(`Content-Type: text/plain; charset="UTF-8"`);
-  lines.push(`Content-Transfer-Encoding: 7bit`);
-  if (opts.inReplyTo) lines.push(`In-Reply-To: ${opts.inReplyTo}`);
-  if (opts.references) lines.push(`References: ${opts.references}`);
-  lines.push("");
-  lines.push(opts.body);
-
-  const raw = lines.join("\r\n");
-  return Buffer.from(raw, "utf8")
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-export async function sendMessage(opts: {
-  to: string;
-  cc?: string;
-  bcc?: string;
-  subject: string;
-  body: string;
-  threadId?: string;
-  inReplyTo?: string;
-  references?: string;
-}): Promise<void> {
-  const raw = buildRawMessage(opts);
+export async function sendMessage(
+  opts: OutgoingMessage & { threadId?: string }
+): Promise<void> {
+  // Without a From header the builder would name the Message-ID after
+  // "localhost", which spam filters dislike — use the account's domain, as
+  // regular mail apps do. (From itself is left to Gmail so it fills in the
+  // account's display name.)
+  const account = await getGoogleAccount();
+  const domain = account?.email?.split("@")[1] || "mail.gmail.com";
+  const mime = await buildMimeMessage({
+    ...opts,
+    messageId: `<${randomUUID()}@${domain}>`,
+  });
   await withGmail((gmail) =>
     gmail.users.messages.send({
       userId: "me",
-      requestBody: { raw, threadId: opts.threadId },
+      requestBody: { threadId: opts.threadId },
+      // Media upload (rather than a base64 `raw` field) lifts the size cap
+      // to Gmail's full 35MB, which matters once attachments are included.
+      // The client library pipes media bodies, so it needs a stream.
+      media: { mimeType: "message/rfc822", body: Readable.from(mime) },
     })
   );
 }
@@ -402,7 +374,7 @@ export async function sendLockoutAlert(lockoutSeconds: number): Promise<void> {
   await sendMessage({
     to: alertEmail,
     subject: "Security alert: your email app was locked out",
-    body:
+    text:
       `Someone entered the wrong PIN 5 times in a row on your email web app ` +
       `and it has been locked for ${minutes} minute(s).\n\n` +
       `If this wasn't you, consider changing APP_PIN in your Vercel project's ` +
