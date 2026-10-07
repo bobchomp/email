@@ -4,12 +4,13 @@ import { withGmailErrorHandling } from "@/lib/api-helpers";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { to, cc, bcc, subject, text, threadId, inReplyTo, references } = body as {
+  const { to, cc, bcc, subject, text, html, threadId, inReplyTo, references } = body as {
     to?: string;
     cc?: string;
     bcc?: string;
     subject?: string;
     text?: string;
+    html?: string;
     threadId?: string;
     inReplyTo?: string;
     references?: string;
@@ -27,7 +28,8 @@ export async function POST(req: NextRequest) {
       cc,
       bcc,
       subject: subject ?? "",
-      body: text,
+      text,
+      html: html || undefined,
       threadId,
       inReplyTo,
       references,
