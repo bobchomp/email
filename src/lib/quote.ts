@@ -169,18 +169,3 @@ export function buildQuote(
   const text = `${attribution}\n${quoteLines(bodyText)}`;
   return { html, text };
 }
-
-// All `cid:` references an HTML body makes, so the matching inline images
-// can travel with a reply or forward.
-export function referencedContentIds(html: string | null): Set<string> {
-  const ids = new Set<string>();
-  if (!html) return ids;
-  for (const m of html.matchAll(/cid:([^"'\s)>]+)/gi)) {
-    try {
-      ids.add(decodeURIComponent(m[1]));
-    } catch {
-      ids.add(m[1]);
-    }
-  }
-  return ids;
-}

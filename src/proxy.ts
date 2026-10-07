@@ -28,7 +28,10 @@ export async function proxy(req: NextRequest) {
   if (
     PUBLIC_PATHS.has(pathname) ||
     pathname.startsWith("/_next") ||
-    ICON_PATHS.has(pathname)
+    ICON_PATHS.has(pathname) ||
+    // Authorised by a signature in the URL instead of the cookie, which
+    // the sandboxed email frame can't send.
+    pathname.startsWith("/api/inline-image/")
   ) {
     return NextResponse.next();
   }
