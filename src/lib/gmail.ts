@@ -9,12 +9,16 @@ import {
   extractAttachments,
   extractBody,
   findContentIdParts,
+  findPartById,
+  listInlineImages,
   partData,
+  referencedContentIds,
   textToHtml,
   type Attachment,
+  type InlineImage,
   type MessageBody,
 } from "./message-parts";
-import { buildQuote, htmlToPlainText, referencedContentIds, type QuoteMode } from "./quote";
+import { buildQuote, htmlToPlainText, type QuoteMode } from "./quote";
 import {
   createOAuthClient,
   isReconnectRequiredError,
@@ -139,13 +143,15 @@ export async function listMessages(opts: {
   });
 }
 
-export type { MessageBody, Attachment };
+export type { MessageBody, Attachment, InlineImage };
 
 export type MessageDetail = MessageSummary & {
   to: string;
   cc: string;
   body: MessageBody;
   attachments: Attachment[];
+  // Images the HTML body can show via `cid:` references.
+  inlineImages: InlineImage[];
   messageIdHeader: string;
   references: string;
 };
@@ -181,6 +187,7 @@ async function toMessageDetail(
     labelIds,
     body: await extractBody(msg.payload, attachmentFetcher(gmail, msg.id!)),
     attachments: extractAttachments(msg.payload),
+    inlineImages: listInlineImages(msg.payload),
     messageIdHeader: header(headers, "Message-ID"),
     references: header(headers, "References"),
   };
@@ -197,6 +204,20 @@ export async function getThread(threadId: string): Promise<MessageDetail[]> {
   return withGmail(async (gmail) => {
     const thread = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
     return Promise.all((thread.data.messages ?? []).map((msg) => toMessageDetail(gmail, msg)));
+  });
+}
+
+// One inline image part of a message, looked up by its (stable) partId.
+export async function getInlinePart(
+  messageId: string,
+  partId: string
+): Promise<{ data: Buffer; mimeType: string } | null> {
+  return withGmail(async (gmail) => {
+    const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
+    const part = findPartById(msg.data.payload, partId);
+    if (!part) return null;
+    const data = await partData(part, attachmentFetcher(gmail, messageId));
+    return data ? { data, mimeType: (part.mimeType || "").toLowerCase() } : null;
   });
 }
 

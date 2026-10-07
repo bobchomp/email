@@ -150,6 +150,24 @@ export function extractAttachments(root: Part | undefined): Attachment[] {
   return result;
 }
 
+export type InlineImage = { contentId: string; partId: string; mimeType: string };
+
+export function listInlineImages(root: Part | undefined): InlineImage[] {
+  return [...findContentIdParts(root)]
+    .filter(([, p]) => (p.mimeType || "").startsWith("image/"))
+    .map(([contentId, p]) => ({ contentId, partId: p.partId ?? "", mimeType: p.mimeType || "" }));
+}
+
+export function findPartById(root: Part | undefined, partId: string): Part | null {
+  if (!root) return null;
+  if ((root.partId ?? "") === partId) return root;
+  for (const child of root.parts ?? []) {
+    const found = findPartById(child, partId);
+    if (found) return found;
+  }
+  return null;
+}
+
 // Every part that can be referenced as `cid:` from an HTML body, keyed by
 // Content-ID, outside of attached emails.
 export function findContentIdParts(root: Part | undefined): Map<string, Part> {
@@ -162,4 +180,19 @@ export function findContentIdParts(root: Part | undefined): Map<string, Part> {
   }
   if (root) walk(root);
   return result;
+}
+
+// All `cid:` references an HTML body makes, so the matching inline images
+// can travel with a reply or forward.
+export function referencedContentIds(html: string | null): Set<string> {
+  const ids = new Set<string>();
+  if (!html) return ids;
+  for (const m of html.matchAll(/cid:([^"'\s)>]+)/gi)) {
+    try {
+      ids.add(decodeURIComponent(m[1]));
+    } catch {
+      ids.add(m[1]);
+    }
+  }
+  return ids;
 }

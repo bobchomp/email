@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { getMessage } from "@/lib/gmail";
 import { buildQuote, type QuoteMode } from "@/lib/quote";
 import { withGmailErrorHandling } from "@/lib/api-helpers";
+import { rewriteCidImages } from "@/lib/inline-images";
 
 const QUOTE_MODES = new Set(["reply", "replyAll", "forward"]);
 
@@ -18,6 +19,9 @@ export async function GET(
   return withGmailErrorHandling(async () => {
     if (!QUOTE_MODES.has(mode)) throw new Error("Invalid mode");
     const original = await getMessage(id);
-    return { html: buildQuote(original, mode as QuoteMode, timeZone).html };
+    const html = buildQuote(original, mode as QuoteMode, timeZone).html;
+    // The sent quote keeps cid: references (the images travel with it);
+    // the preview needs them as loadable URLs.
+    return { html: rewriteCidImages(html, original.id, original.inlineImages) };
   });
 }
