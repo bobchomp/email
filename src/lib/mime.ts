@@ -41,6 +41,9 @@ export async function buildMimeMessage(msg: OutgoingMessage): Promise<Buffer> {
       contentType: a.contentType,
       content: a.content,
       cid: a.cid,
+      // Explicit, because the builder otherwise marks attached emails
+      // (message/rfc822) inline and some clients then render them in the body.
+      contentDisposition: a.cid ? "inline" : "attachment",
     })),
     // Content only ever comes from memory — never let a value be read as a
     // file path or fetched as a URL on the server.

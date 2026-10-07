@@ -3,13 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { MessageDetail } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
-import {
-  buildRecipients,
-  buildSubject,
-  quoteMessage,
-  forwardBody,
-  type ComposeMode,
-} from "@/lib/reply-compose";
+import { buildRecipients, buildSubject, type ComposeMode } from "@/lib/reply-compose";
 import LoadingOverlay from "@/components/LoadingOverlay";
 
 const MODE_LABEL: Record<ComposeMode, string> = {
@@ -32,13 +26,11 @@ export default function InlineComposer({
   onSent: () => void;
 }) {
   const initial = buildRecipients(mode, message, selfEmail);
-  const initialBody =
-    "\n\n" + (mode === "forward" ? forwardBody(message) : quoteMessage(message));
 
   const [to, setTo] = useState(initial.to);
   const [cc, setCc] = useState(initial.cc);
   const [ccVisible, setCcVisible] = useState(!!initial.cc);
-  const [body, setBody] = useState(initialBody);
+  const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -58,17 +50,16 @@ export default function InlineComposer({
     try {
       await apiFetch("/api/gmail/send", {
         method: "POST",
+        // Only the new text goes up — the server fetches the original itself
+        // to build the quote, threading headers, inline images and (for a
+        // forward) attachments.
         body: JSON.stringify({
           to,
           cc: cc || undefined,
           subject: buildSubject(mode, message.subject),
           text: body,
-          threadId: mode === "forward" ? undefined : message.threadId,
-          inReplyTo: mode === "forward" ? undefined : message.messageIdHeader,
-          references:
-            mode === "forward"
-              ? undefined
-              : [message.references, message.messageIdHeader].filter(Boolean).join(" "),
+          quote: { messageId: message.id, mode },
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
       onSent();
@@ -129,6 +120,16 @@ export default function InlineComposer({
         rows={12}
         className="bg-transparent py-2 outline-none text-sm resize-y text-body placeholder:text-muted font-sans"
       />
+
+      <p className="text-xs text-muted">
+        {mode === "forward"
+          ? `The original message${
+              message.attachments.length
+                ? ` and its ${message.attachments.length} attachment${message.attachments.length === 1 ? "" : "s"}`
+                : ""
+            } will be included below your note.`
+          : "The original message will be quoted below your reply."}
+      </p>
 
       {error && <p className="text-sm text-seal-deep">{error}</p>}
 

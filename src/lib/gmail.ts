@@ -3,7 +3,17 @@ import { Readable } from "node:stream";
 import { gmail_v1, google } from "googleapis";
 import { getGoogleAccount } from "./db";
 import { decryptSecret } from "./crypto";
-import { buildMimeMessage, type OutgoingMessage } from "./mime";
+import { buildMimeMessage, type OutgoingAttachment, type OutgoingMessage } from "./mime";
+import {
+  extractAttachments,
+  extractBody,
+  findContentIdParts,
+  partData,
+  textToHtml,
+  type Attachment,
+  type MessageBody,
+} from "./message-parts";
+import { buildQuote, htmlToPlainText, referencedContentIds, type QuoteMode } from "./quote";
 import {
   createOAuthClient,
   isReconnectRequiredError,
@@ -128,52 +138,7 @@ export async function listMessages(opts: {
   });
 }
 
-export type MessageBody = {
-  text: string | null;
-  html: string | null;
-};
-
-function extractBody(part: gmail_v1.Schema$MessagePart | undefined): MessageBody {
-  const result: MessageBody = { text: null, html: null };
-  if (!part) return result;
-
-  function walk(p: gmail_v1.Schema$MessagePart) {
-    if (p.mimeType === "text/plain" && p.body?.data) {
-      result.text = Buffer.from(p.body.data, "base64url").toString("utf8");
-    } else if (p.mimeType === "text/html" && p.body?.data) {
-      result.html = Buffer.from(p.body.data, "base64url").toString("utf8");
-    }
-    for (const child of p.parts ?? []) walk(child);
-  }
-  walk(part);
-  return result;
-}
-
-export type Attachment = {
-  attachmentId: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-};
-
-function extractAttachments(part: gmail_v1.Schema$MessagePart | undefined): Attachment[] {
-  const result: Attachment[] = [];
-  if (!part) return result;
-
-  function walk(p: gmail_v1.Schema$MessagePart) {
-    if (p.filename && p.body?.attachmentId) {
-      result.push({
-        attachmentId: p.body.attachmentId,
-        filename: p.filename,
-        mimeType: p.mimeType || "application/octet-stream",
-        size: p.body.size ?? 0,
-      });
-    }
-    for (const child of p.parts ?? []) walk(child);
-  }
-  walk(part);
-  return result;
-}
+export type { MessageBody, Attachment };
 
 export type MessageDetail = MessageSummary & {
   to: string;
@@ -184,59 +149,53 @@ export type MessageDetail = MessageSummary & {
   references: string;
 };
 
+function attachmentFetcher(gmail: gmail_v1.Gmail, messageId: string) {
+  return async (attachmentId: string): Promise<Buffer> => {
+    const att = await gmail.users.messages.attachments.get({
+      userId: "me",
+      messageId,
+      id: attachmentId,
+    });
+    return Buffer.from(att.data.data ?? "", "base64url");
+  };
+}
+
+async function toMessageDetail(
+  gmail: gmail_v1.Gmail,
+  msg: gmail_v1.Schema$Message
+): Promise<MessageDetail> {
+  const labelIds = msg.labelIds ?? [];
+  const headers = msg.payload?.headers;
+  return {
+    id: msg.id!,
+    threadId: msg.threadId!,
+    snippet: msg.snippet ?? "",
+    subject: header(headers, "Subject") || "(no subject)",
+    from: header(headers, "From"),
+    to: header(headers, "To"),
+    cc: header(headers, "Cc"),
+    date: header(headers, "Date"),
+    unread: labelIds.includes("UNREAD"),
+    starred: labelIds.includes("STARRED"),
+    labelIds,
+    body: await extractBody(msg.payload, attachmentFetcher(gmail, msg.id!)),
+    attachments: extractAttachments(msg.payload),
+    messageIdHeader: header(headers, "Message-ID"),
+    references: header(headers, "References"),
+  };
+}
+
 export async function getMessage(id: string): Promise<MessageDetail> {
   return withGmail(async (gmail) => {
-    const msg = await gmail.users.messages.get({
-      userId: "me",
-      id,
-      format: "full",
-    });
-    const labelIds = msg.data.labelIds ?? [];
-    const headers = msg.data.payload?.headers;
-    return {
-      id: msg.data.id!,
-      threadId: msg.data.threadId!,
-      snippet: msg.data.snippet ?? "",
-      subject: header(headers, "Subject") || "(no subject)",
-      from: header(headers, "From"),
-      to: header(headers, "To"),
-      cc: header(headers, "Cc"),
-      date: header(headers, "Date"),
-      unread: labelIds.includes("UNREAD"),
-      starred: labelIds.includes("STARRED"),
-      labelIds,
-      body: extractBody(msg.data.payload),
-      attachments: extractAttachments(msg.data.payload),
-      messageIdHeader: header(headers, "Message-ID"),
-      references: header(headers, "References"),
-    };
+    const msg = await gmail.users.messages.get({ userId: "me", id, format: "full" });
+    return toMessageDetail(gmail, msg.data);
   });
 }
 
 export async function getThread(threadId: string): Promise<MessageDetail[]> {
   return withGmail(async (gmail) => {
     const thread = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
-    return (thread.data.messages ?? []).map((msg) => {
-      const labelIds = msg.labelIds ?? [];
-      const headers = msg.payload?.headers;
-      return {
-        id: msg.id!,
-        threadId: msg.threadId!,
-        snippet: msg.snippet ?? "",
-        subject: header(headers, "Subject") || "(no subject)",
-        from: header(headers, "From"),
-        to: header(headers, "To"),
-        cc: header(headers, "Cc"),
-        date: header(headers, "Date"),
-        unread: labelIds.includes("UNREAD"),
-        starred: labelIds.includes("STARRED"),
-        labelIds,
-        body: extractBody(msg.payload),
-        attachments: extractAttachments(msg.payload),
-        messageIdHeader: header(headers, "Message-ID"),
-        references: header(headers, "References"),
-      };
-    });
+    return Promise.all((thread.data.messages ?? []).map((msg) => toMessageDetail(gmail, msg)));
   });
 }
 
@@ -360,6 +319,112 @@ export async function sendMessage(
       media: { mimeType: "message/rfc822", body: Readable.from(mime) },
     })
   );
+}
+
+// Gmail's limit for attachments; the encoded message (~1.37x) then stays
+// under its 35MB total-size limit.
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+export type ComposeRequest = {
+  to: string;
+  cc?: string;
+  bcc?: string;
+  subject: string;
+  // The newly written part only — never the quoted original.
+  html?: string;
+  text?: string;
+  attachments?: OutgoingAttachment[];
+  quote?: {
+    messageId: string;
+    mode: QuoteMode;
+    // Which of the original's attachments to forward (by partId); all when
+    // omitted.
+    forwardPartIds?: string[];
+  };
+  timeZone?: string;
+};
+
+// Builds and sends a new message, reply or forward. For replies/forwards
+// the original is fetched here from Gmail (not trusted from the browser):
+// its quote, threading headers, inline images and — for forwards — its
+// attachments all come from the real message.
+export async function composeAndSend(req: ComposeRequest): Promise<void> {
+  const newHtml = req.html || (req.text ? textToHtml(req.text) : "");
+  const newText = req.html ? htmlToPlainText(req.html) : (req.text ?? "");
+  const attachments: OutgoingAttachment[] = [...(req.attachments ?? [])];
+
+  let html = `<div dir="ltr">${newHtml}</div>`;
+  let text = newText;
+  let threadId: string | undefined;
+  let inReplyTo: string | undefined;
+  let references: string | undefined;
+
+  if (req.quote) {
+    const { messageId, mode, forwardPartIds } = req.quote;
+    await withGmail(async (gmail) => {
+      const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
+      const original = await toMessageDetail(gmail, msg.data);
+      const fetchAttachment = attachmentFetcher(gmail, messageId);
+
+      const quote = buildQuote(original, mode, req.timeZone);
+      html += `<br>${quote.html}`;
+      text = `${newText}\n\n${quote.text}`;
+
+      // Inline images the quoted HTML shows, kept under their Content-IDs.
+      const cidParts = findContentIdParts(msg.data.payload);
+      const inlineCids = referencedContentIds(original.body.html);
+      for (const cid of inlineCids) {
+        const part = cidParts.get(cid);
+        if (!part) continue;
+        const data = await partData(part, fetchAttachment);
+        if (!data) continue;
+        attachments.push({
+          filename: part.filename || "image",
+          contentType: part.mimeType || "application/octet-stream",
+          content: data,
+          cid,
+        });
+      }
+
+      if (mode === "forward") {
+        const wanted = forwardPartIds ? new Set(forwardPartIds) : null;
+        for (const att of original.attachments) {
+          if (att.contentId && inlineCids.has(att.contentId)) continue;
+          if (wanted && !wanted.has(att.partId)) continue;
+          attachments.push({
+            filename: att.filename,
+            contentType: att.mimeType,
+            content: await fetchAttachment(att.attachmentId),
+          });
+        }
+      } else {
+        threadId = original.threadId;
+        inReplyTo = original.messageIdHeader || undefined;
+        references =
+          [original.references, original.messageIdHeader].filter(Boolean).join(" ") || undefined;
+      }
+    });
+  }
+
+  const totalBytes = attachments.reduce((sum, a) => sum + a.content.length, 0);
+  if (totalBytes > MAX_ATTACHMENT_BYTES) {
+    throw new Error(
+      `Attachments total ${(totalBytes / 1024 / 1024).toFixed(1)}MB — Gmail's limit is 25MB`
+    );
+  }
+
+  await sendMessage({
+    to: req.to,
+    cc: req.cc,
+    bcc: req.bcc,
+    subject: req.subject,
+    html,
+    text,
+    attachments,
+    threadId,
+    inReplyTo,
+    references,
+  });
 }
 
 // Best-effort self-alert when the PIN gets locked out after repeated wrong
