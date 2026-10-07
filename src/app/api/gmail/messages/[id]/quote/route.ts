@@ -22,6 +22,6 @@ export async function GET(
     const html = buildQuote(original, mode as QuoteMode, timeZone).html;
     // The sent quote keeps cid: references (the images travel with it);
     // the preview needs them as loadable URLs.
-    return { html: rewriteCidImages(html, original.id, original.inlineImages) };
+    return { html: rewriteCidImages(html, original.id, original.inlineImages, req.nextUrl.origin).html };
   });
 }

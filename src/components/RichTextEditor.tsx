@@ -42,6 +42,8 @@ function insertUploadingImages(view: EditorView, files: File[], onImageUpload: P
     view.dispatch(view.state.tr.replaceSelectionWith(node));
 
     const updateNode = (attrs: Record<string, unknown> | null) => {
+      // The composer may have been closed while the upload was running.
+      if (view.isDestroyed) return;
       view.state.doc.descendants((n, pos) => {
         if (n.type.name !== "image" || n.attrs.src !== src) return true;
         const tr = attrs

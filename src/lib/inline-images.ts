@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { InlineImage } from "./message-parts";
+import { CID_REFERENCE, cidKey, type InlineImage } from "./message-parts";
 
 // Email HTML is rendered in a sandboxed iframe with an opaque origin, so
 // image requests from it don't carry the session cookie. Inline (cid:)
@@ -32,10 +32,13 @@ function sign(messageId: string, partId: string, exp: number): string {
     .digest("base64url");
 }
 
-export function signedInlineImageUrl(messageId: string, partId: string): string {
-  const exp = Math.floor(Date.now() / 1000) + TTL_SECONDS;
+// Expiry is rounded up to a whole hour (so a link lasts 1–2 hours) to keep
+// URLs identical between page loads within the hour, letting the browser
+// cache the image instead of re-fetching it from Gmail on every view.
+export function signedInlineImageUrl(origin: string, messageId: string, partId: string): string {
+  const exp = (Math.floor(Date.now() / 1000 / TTL_SECONDS) + 2) * TTL_SECONDS;
   const sig = sign(messageId, partId, exp);
-  return `/api/inline-image/${encodeURIComponent(messageId)}/${encodeURIComponent(partId)}?exp=${exp}&sig=${sig}`;
+  return `${origin}/api/inline-image/${encodeURIComponent(messageId)}/${encodeURIComponent(partId)}?exp=${exp}&sig=${sig}`;
 }
 
 export function verifyInlineImageSignature(
@@ -51,13 +54,28 @@ export function verifyInlineImageSignature(
   return expected.length === given.length && crypto.timingSafeEqual(expected, given);
 }
 
-// Points every `cid:` reference in an email's HTML at its signed URL.
-export function rewriteCidImages(html: string, messageId: string, images: InlineImage[]): string {
-  let out = html;
-  for (const img of images) {
-    if (!SAFE_IMAGE_TYPES.has(img.mimeType.toLowerCase())) continue;
-    const url = signedInlineImageUrl(messageId, img.partId);
-    out = out.split(`cid:${img.contentId}`).join(url);
-  }
-  return out;
+// Points every `cid:` reference in an email's HTML at its signed URL, in a
+// single pass (so one Content-ID that prefixes another can't clobber it).
+// URLs are absolute: the email's own <base href> would otherwise resolve
+// them against the sender's server. Returns the cidKeys it resolved.
+export function rewriteCidImages(
+  html: string,
+  messageId: string,
+  images: InlineImage[],
+  origin: string
+): { html: string; rewritten: Set<string> } {
+  const byKey = new Map(
+    images
+      .filter((img) => SAFE_IMAGE_TYPES.has(img.mimeType.toLowerCase()))
+      .map((img) => [cidKey(img.contentId), img])
+  );
+  const rewritten = new Set<string>();
+  const out = html.replace(CID_REFERENCE, (match, raw: string) => {
+    const key = cidKey(raw);
+    const img = byKey.get(key);
+    if (!img) return match;
+    rewritten.add(key);
+    return signedInlineImageUrl(origin, messageId, img.partId);
+  });
+  return { html: out, rewritten };
 }

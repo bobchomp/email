@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUploadMeta, putUploadChunk } from "@/lib/db";
-import { UPLOAD_CHUNK_BYTES } from "@/lib/upload-limits";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { UPLOAD_CHUNK_BYTES, UUID_PATTERN } from "@/lib/upload-limits";
 
 export async function PUT(
   req: NextRequest,
@@ -10,7 +8,7 @@ export async function PUT(
 ) {
   const { id, idx: idxParam } = await params;
   const idx = Number(idxParam);
-  if (!UUID.test(id) || !Number.isInteger(idx) || idx < 0) {
+  if (!UUID_PATTERN.test(id) || !Number.isInteger(idx) || idx < 0) {
     return NextResponse.json({ error: "Bad upload" }, { status: 400 });
   }
 

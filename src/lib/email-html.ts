@@ -18,14 +18,14 @@ export function toEmailHtml(editorHtml: string): { html: string; inlineUploadIds
     );
   }
 
-  const inlineUploadIds: string[] = [];
+  const inlineUploadIds = new Set<string>();
   for (const img of Array.from(doc.querySelectorAll("img"))) {
     const uploadId = img.getAttribute("data-upload-id");
     if (uploadId) {
       img.setAttribute("src", `cid:${uploadId}@inline`);
       img.removeAttribute("data-upload-id");
       img.setAttribute("style", "max-width:100%");
-      inlineUploadIds.push(uploadId);
+      inlineUploadIds.add(uploadId);
     } else if ((img.getAttribute("src") ?? "").startsWith("blob:")) {
       // A pasted image whose upload never finished can't be delivered.
       img.remove();
@@ -37,7 +37,8 @@ export function toEmailHtml(editorHtml: string): { html: string; inlineUploadIds
     a.setAttribute("target", "_blank");
   }
 
-  return { html: doc.body.innerHTML, inlineUploadIds };
+  // A Set: an image copied within the editor shares one upload.
+  return { html: doc.body.innerHTML, inlineUploadIds: [...inlineUploadIds] };
 }
 
 export function isEditorHtmlEmpty(editorHtml: string): boolean {

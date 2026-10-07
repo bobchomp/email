@@ -8,11 +8,14 @@ import { buildMimeMessage, type OutgoingAttachment, type OutgoingMessage } from 
 import {
   extractAttachments,
   extractBody,
+  cidKey,
+  contentIdOf,
   findContentIdParts,
   findPartById,
   listInlineImages,
   partData,
   referencedContentIds,
+  referencedInlineBytes,
   textToHtml,
   type Attachment,
   type InlineImage,
@@ -152,6 +155,9 @@ export type MessageDetail = MessageSummary & {
   attachments: Attachment[];
   // Images the HTML body can show via `cid:` references.
   inlineImages: InlineImage[];
+  // Size of what the body shows inline — carried by any reply/forward
+  // quote, so it counts toward the 25MB attachment limit.
+  inlineBytes: number;
   messageIdHeader: string;
   references: string;
 };
@@ -173,6 +179,7 @@ async function toMessageDetail(
 ): Promise<MessageDetail> {
   const labelIds = msg.labelIds ?? [];
   const headers = msg.payload?.headers;
+  const body = await extractBody(msg.payload, attachmentFetcher(gmail, msg.id!));
   return {
     id: msg.id!,
     threadId: msg.threadId!,
@@ -185,9 +192,10 @@ async function toMessageDetail(
     unread: labelIds.includes("UNREAD"),
     starred: labelIds.includes("STARRED"),
     labelIds,
-    body: await extractBody(msg.payload, attachmentFetcher(gmail, msg.id!)),
+    body,
     attachments: extractAttachments(msg.payload),
     inlineImages: listInlineImages(msg.payload),
+    inlineBytes: referencedInlineBytes(msg.payload, body.html),
     messageIdHeader: header(headers, "Message-ID"),
     references: header(headers, "References"),
   };
@@ -374,11 +382,13 @@ export async function composeAndSend(req: ComposeRequest): Promise<void> {
   const newHtml = req.html || (req.text ? textToHtml(req.text) : "");
   const newText = req.html ? htmlToPlainText(req.html) : (req.text ?? "");
   const attachments: OutgoingAttachment[] = [];
-  const uploadIds = [...(req.uploadIds ?? []), ...(req.inlineUploadIds ?? [])];
+  // De-duplicated: an image copied within the editor shares one upload.
+  const inlineIds = new Set(req.inlineUploadIds ?? []);
+  const uploadIds = [...new Set([...(req.uploadIds ?? []), ...inlineIds])];
   for (const id of uploadIds) {
     const upload = await readUpload(id);
     if (!upload) throw new Error("An attachment didn't finish uploading — try attaching it again");
-    const inline = req.inlineUploadIds?.includes(id);
+    const inline = inlineIds.has(id);
     attachments.push({
       filename: upload.filename,
       contentType: upload.contentType,
@@ -404,11 +414,12 @@ export async function composeAndSend(req: ComposeRequest): Promise<void> {
       html += `<br>${quote.html}`;
       text = `${newText}\n\n${quote.text}`;
 
-      // Inline images the quoted HTML shows, kept under their Content-IDs.
+      // Inline images the quoted HTML shows, kept under their exact original
+      // Content-IDs so the unchanged references in the quote still resolve.
       const cidParts = findContentIdParts(msg.data.payload);
       const inlineCids = referencedContentIds(original.body.html);
-      for (const cid of inlineCids) {
-        const part = cidParts.get(cid);
+      for (const key of inlineCids) {
+        const part = cidParts.get(key);
         if (!part) continue;
         const data = await partData(part, fetchAttachment);
         if (!data) continue;
@@ -416,14 +427,14 @@ export async function composeAndSend(req: ComposeRequest): Promise<void> {
           filename: part.filename || "image",
           contentType: part.mimeType || "application/octet-stream",
           content: data,
-          cid,
+          cid: contentIdOf(part),
         });
       }
 
       if (mode === "forward") {
         const wanted = forwardPartIds ? new Set(forwardPartIds) : null;
         for (const att of original.attachments) {
-          if (att.contentId && inlineCids.has(att.contentId)) continue;
+          if (att.contentId && inlineCids.has(cidKey(att.contentId))) continue;
           if (wanted && !wanted.has(att.partId)) continue;
           attachments.push({
             filename: att.filename,

@@ -9,6 +9,7 @@ import InlineComposer from "./InlineComposer";
 import { buildRecipients, type ComposeMode } from "@/lib/reply-compose";
 import LoadingOverlay from "@/components/LoadingOverlay";
 import { EMAIL_FRAME_SANDBOX, makeLinksOpenInNewTab } from "@/lib/email-frame";
+import { formatBytes } from "@/lib/upload-limits";
 
 function getThreadOrder(): string[] {
   try {
@@ -17,12 +18,6 @@ function getThreadOrder(): string[] {
   } catch {
     return [];
   }
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default function ThreadClient({
@@ -227,7 +222,7 @@ export default function ThreadClient({
                       <path d="M21.44 11.05 12.25 20.24a5 5 0 0 1-7.07-7.07l9.19-9.19a3.34 3.34 0 0 1 4.71 4.71l-9.2 9.19a1.67 1.67 0 0 1-2.36-2.36l8.49-8.48" />
                     </svg>
                     <span className="truncate max-w-48">{a.filename}</span>
-                    <span className="text-muted text-xs shrink-0">{formatFileSize(a.size)}</span>
+                    <span className="text-muted text-xs shrink-0">{formatBytes(a.size)}</span>
                   </a>
                 ))}
               </div>
@@ -258,6 +253,9 @@ export default function ThreadClient({
 
             {composerFor?.messageId === m.id && (
               <InlineComposer
+                // Switching Reply → Forward etc. must start a fresh composer
+                // (recipients, quote preview), not keep the old mode's state.
+                key={composerFor.mode}
                 mode={composerFor.mode}
                 message={m}
                 selfEmail={accountEmail}

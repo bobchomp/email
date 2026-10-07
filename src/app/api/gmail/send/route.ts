@@ -1,13 +1,13 @@
 import { NextRequest } from "next/server";
 import { composeAndSend, type ComposeRequest } from "@/lib/gmail";
 import { withGmailErrorHandling } from "@/lib/api-helpers";
+import { UUID_PATTERN } from "@/lib/upload-limits";
 
 // Fetching an original's attachments and uploading up to 25MB to Gmail can
 // take a while.
 export const maxDuration = 60;
 
 const QUOTE_MODES = new Set(["reply", "replyAll", "forward"]);
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function optionalString(v: unknown): string | undefined {
   return typeof v === "string" && v ? v : undefined;
@@ -15,7 +15,7 @@ function optionalString(v: unknown): string | undefined {
 
 function uploadIdList(v: unknown): string[] | undefined {
   if (v === undefined) return undefined;
-  if (!Array.isArray(v) || v.length > 100 || !v.every((id) => typeof id === "string" && UUID.test(id))) {
+  if (!Array.isArray(v) || v.length > 100 || !v.every((id) => typeof id === "string" && UUID_PATTERN.test(id))) {
     throw new Error("Invalid attachments");
   }
   return v as string[];

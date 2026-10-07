@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteUploads } from "@/lib/db";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { UUID_PATTERN } from "@/lib/upload-limits";
 
 // Discards an attachment removed from the composer before sending.
 export async function DELETE(
@@ -9,7 +8,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  if (!UUID.test(id)) return NextResponse.json({ error: "Bad upload" }, { status: 400 });
+  if (!UUID_PATTERN.test(id)) return NextResponse.json({ error: "Bad upload" }, { status: 400 });
   await deleteUploads([id]);
   return NextResponse.json({ ok: true });
 }
