@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { apiFetch } from "@/lib/api-client";
 import { EMAIL_FRAME_SANDBOX, makeLinksOpenInNewTab } from "@/lib/email-frame";
 import type { ComposeMode } from "@/lib/reply-compose";
+
+// Inline images in the preview use signed URLs valid for at least an hour;
+// refetch well before then instead of showing expired (broken) images.
+const REFRESH_AFTER_MS = 30 * 60 * 1000;
 
 // The quoted original, exactly as the server will append it — read-only
 // and collapsed by default, like Gmail's "•••".
@@ -11,11 +15,12 @@ export default function QuotedPreview({ messageId, mode }: { messageId: string; 
   const [open, setOpen] = useState(false);
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fetchedAt = useRef(0);
 
   async function toggle() {
     const next = !open;
     setOpen(next);
-    if (next && html === null) {
+    if (next && (html === null || Date.now() - fetchedAt.current > REFRESH_AFTER_MS)) {
       setError(null);
       try {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -23,6 +28,7 @@ export default function QuotedPreview({ messageId, mode }: { messageId: string; 
           `/api/gmail/messages/${messageId}/quote?mode=${mode}&tz=${encodeURIComponent(tz)}`
         );
         setHtml(data.html);
+        fetchedAt.current = Date.now();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Couldn't load the original");
       }

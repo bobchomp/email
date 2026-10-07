@@ -2,17 +2,9 @@ import * as cheerio from "cheerio";
 import juice from "juice";
 import { convert } from "html-to-text";
 import type { MessageDetail } from "./gmail";
-import { textToHtml } from "./message-parts";
+import { escapeHtml, textToHtml } from "./message-parts";
 
 export type QuoteMode = "reply" | "replyAll" | "forward";
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 // Makes the original email's HTML safe to embed inside a reply: its
 // <style> rules are inlined onto the elements they target (so they can't

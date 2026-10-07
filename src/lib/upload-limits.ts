@@ -5,6 +5,9 @@ export const UPLOAD_CHUNK_BYTES = 3 * 1024 * 1024;
 // its 35MB total message size.
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
+// Upload ids are random UUIDs.
+export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;

@@ -43,19 +43,15 @@ export default function InlineComposer({
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  // A forward carries the original's files (minus images shown inline in
-  // its body, which travel with the quote) unless removed here.
-  const forwardable =
-    mode === "forward"
-      ? message.attachments.filter(
-          (a) => !(a.contentId && message.body.html?.includes(`cid:${a.contentId}`))
-        )
-      : [];
+  // A forward carries the original's files unless removed here (the thread
+  // route already left out images shown inline, which travel with the
+  // quote instead — their bytes are message.inlineBytes).
+  const forwardable = mode === "forward" ? message.attachments : [];
   const [removedPartIds, setRemovedPartIds] = useState<Set<string>>(new Set());
   const forwarded = forwardable.filter((a) => !removedPartIds.has(a.partId));
   const forwardedBytes = forwarded.reduce((n, a) => n + a.size, 0);
 
-  const attachments = useAttachments(forwardedBytes);
+  const attachments = useAttachments(forwardedBytes + message.inlineBytes);
 
   async function send() {
     if (!to || sending || attachments.busy) return;
@@ -87,6 +83,7 @@ export default function InlineComposer({
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
+      attachments.markSent();
       onSent();
       onClose();
     } catch (err) {

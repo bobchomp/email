@@ -52,6 +52,7 @@ export default function ComposeModal({
           inlineUploadIds,
         }),
       });
+      attachments.markSent();
       onSent();
       onClose();
     } catch (err) {

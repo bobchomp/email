@@ -56,7 +56,7 @@ export async function partData(p: Part, fetchAttachment: FetchAttachment): Promi
   return null;
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -90,13 +90,13 @@ export async function extractBody(
       // In multipart/mixed (Apple Mail's layout), an inline image sitting
       // between body pieces is shown at that spot — unless the HTML already
       // references it, as multipart/related bodies do.
-      const referenced = children.map((c) => c.html ?? "").join("");
+      const referenced = referencedContentIds(children.map((c) => c.html ?? "").join(""));
       const inlineImages = (p.parts ?? []).map((child) => {
         if (type !== "multipart/mixed") return null;
         if (!(child.mimeType || "").startsWith("image/")) return null;
         if (/^\s*attachment/i.test(partHeader(child, "Content-Disposition"))) return null;
         const cid = contentIdOf(child);
-        if (!cid || referenced.includes(`cid:${cid}`)) return null;
+        if (!cid || referenced.has(cidKey(cid))) return null;
         return `<img src="cid:${escapeHtml(cid)}" alt="${escapeHtml(child.filename || "")}">`;
       });
 
@@ -153,9 +153,29 @@ export function extractAttachments(root: Part | undefined): Attachment[] {
 export type InlineImage = { contentId: string; partId: string; mimeType: string };
 
 export function listInlineImages(root: Part | undefined): InlineImage[] {
-  return [...findContentIdParts(root)]
-    .filter(([, p]) => (p.mimeType || "").startsWith("image/"))
-    .map(([contentId, p]) => ({ contentId, partId: p.partId ?? "", mimeType: p.mimeType || "" }));
+  return [...findContentIdParts(root).values()]
+    .filter((p) => (p.mimeType || "").startsWith("image/"))
+    .map((p) => ({ contentId: contentIdOf(p)!, partId: p.partId ?? "", mimeType: p.mimeType || "" }));
+}
+
+// How a `cid:` reference and a Content-ID are compared: references may be
+// percent-encoded (RFC 2392) and clients disagree on case, so both sides
+// are decoded and lower-cased.
+export function cidKey(raw: string): string {
+  try {
+    return decodeURIComponent(raw).toLowerCase();
+  } catch {
+    return raw.toLowerCase();
+  }
+}
+
+// Bytes of the parts an HTML body shows via `cid:` — they travel with any
+// reply/forward quote, so they count toward Gmail's attachment limit.
+export function referencedInlineBytes(root: Part | undefined, html: string | null): number {
+  const parts = findContentIdParts(root);
+  let total = 0;
+  for (const key of referencedContentIds(html)) total += parts.get(key)?.body?.size ?? 0;
+  return total;
 }
 
 export function findPartById(root: Part | undefined, partId: string): Part | null {
@@ -169,30 +189,26 @@ export function findPartById(root: Part | undefined, partId: string): Part | nul
 }
 
 // Every part that can be referenced as `cid:` from an HTML body, keyed by
-// Content-ID, outside of attached emails.
+// cidKey(Content-ID), outside of attached emails.
 export function findContentIdParts(root: Part | undefined): Map<string, Part> {
   const result = new Map<string, Part>();
   function walk(p: Part) {
     if (p.mimeType === "message/rfc822") return;
     const cid = contentIdOf(p);
-    if (cid && !(p.mimeType || "").startsWith("multipart/")) result.set(cid, p);
+    if (cid && !(p.mimeType || "").startsWith("multipart/")) result.set(cidKey(cid), p);
     for (const child of p.parts ?? []) walk(child);
   }
   if (root) walk(root);
   return result;
 }
 
-// All `cid:` references an HTML body makes, so the matching inline images
-// can travel with a reply or forward.
+// A `cid:` URL inside HTML: runs until a quote, whitespace, ")" or ">".
+export const CID_REFERENCE = /cid:([^"'\s)>]+)/gi;
+
+// cidKey()s of every `cid:` reference an HTML body makes.
 export function referencedContentIds(html: string | null): Set<string> {
   const ids = new Set<string>();
   if (!html) return ids;
-  for (const m of html.matchAll(/cid:([^"'\s)>]+)/gi)) {
-    try {
-      ids.add(decodeURIComponent(m[1]));
-    } catch {
-      ids.add(m[1]);
-    }
-  }
+  for (const m of html.matchAll(CID_REFERENCE)) ids.add(cidKey(m[1]));
   return ids;
 }
