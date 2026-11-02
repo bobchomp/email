@@ -4,9 +4,26 @@ import InboxClient from "./InboxClient";
 
 export const dynamic = "force-dynamic";
 
-export default async function InboxPage() {
+function firstString(v: string | string[] | undefined): string {
+  return (Array.isArray(v) ? v[0] : v) ?? "";
+}
+
+export default async function InboxPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const account = await getGoogleAccount();
   if (!account) redirect("/connect");
 
-  return <InboxClient accountEmail={account.email} />;
+  // The open folder and search live in the URL, so coming back from an
+  // email (or reloading) returns to the same list.
+  const params = await searchParams;
+  return (
+    <InboxClient
+      accountEmail={account.email}
+      initialFolderKey={firstString(params.folder)}
+      initialQuery={firstString(params.q)}
+    />
+  );
 }

@@ -303,6 +303,20 @@ export async function deleteMessagePermanently(id: string): Promise<void> {
   await withGmail((gmail) => gmail.users.messages.delete({ userId: "me", id }));
 }
 
+// Unread messages anywhere except Spam and Trash — what the Unread folder
+// lists. Label counts include every message carrying the label, so the
+// unread ones sitting in Spam/Trash are taken back out. Three labels.get
+// calls (1 quota unit each) rather than paging through a search.
+export async function getUnreadCount(): Promise<number> {
+  return withGmail(async (gmail) => {
+    const get = (id: string) => gmail.users.labels.get({ userId: "me", id });
+    const [unread, spam, trash] = await Promise.all([get("UNREAD"), get("SPAM"), get("TRASH")]);
+    const total = unread.data.messagesUnread ?? unread.data.messagesTotal ?? 0;
+    const excluded = (spam.data.messagesUnread ?? 0) + (trash.data.messagesUnread ?? 0);
+    return Math.max(0, total - excluded);
+  });
+}
+
 export type Label = {
   id: string;
   name: string;

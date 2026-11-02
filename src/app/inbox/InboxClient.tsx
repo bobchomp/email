@@ -13,6 +13,13 @@ import {
   messagesCacheKey,
   isFresh,
   MESSAGES_MAX_AGE_MS,
+  setReadInAllCachedMessages,
+  getKeptRead,
+  addKeptRead,
+  clearKeptRead,
+  setReturnTo,
+  getCachedUnreadCount,
+  setCachedUnreadCount,
 } from "@/lib/inbox-cache";
 import ComposeModal from "./ComposeModal";
 import LoadingOverlay from "@/components/LoadingOverlay";
@@ -23,11 +30,13 @@ type FolderEntry = { key: string; label: string; labelIds?: string[]; color?: st
 // whichever list (folder/search) the message was opened from.
 export const THREAD_ORDER_KEY = "mail:threadOrder";
 
-// Gmail's own sidebar order. "ALL" is synthetic (no labelIds = no filter)
-// and always shown; everything else only shows once we know it actually
-// exists (and isn't hidden) on the connected account.
+// Gmail's own sidebar order. "UNREAD" and "ALL" are always shown ("ALL"
+// has no labelIds = no filter); everything else only shows once we know it
+// actually exists (and isn't hidden) on the connected account.
 const SYSTEM_LABEL_ORDER: { id: string; label: string; synthetic?: boolean }[] = [
   { id: "INBOX", label: "Inbox" },
+  // Every unread message outside Spam/Trash (which Gmail's list leaves out).
+  { id: "UNREAD", label: "Unread", synthetic: true },
   { id: "STARRED", label: "Starred" },
   { id: "IMPORTANT", label: "Important" },
   { id: "SENT", label: "Sent" },
@@ -40,6 +49,30 @@ const SYSTEM_LABEL_ORDER: { id: string; label: string; synthetic?: boolean }[] =
 // Shown before the real label list has loaded, so the sidebar isn't empty.
 const DEFAULT_VISIBLE_IDS = new Set(["INBOX", "STARRED", "SENT", "TRASH"]);
 
+function folderForKey(key: string): FolderEntry {
+  const system = SYSTEM_LABEL_ORDER.find((s) => s.id === key);
+  if (system) {
+    return { key: system.id, label: system.label, labelIds: system.id === "ALL" ? undefined : [system.id] };
+  }
+  // A user label id (e.g. "Label_12"); its name and colour come from the
+  // label list once loaded — the active folder only needs key + labelIds.
+  if (/^[\w-]{1,100}$/.test(key)) return { key, label: key, labelIds: [key] };
+  return { key: "INBOX", label: "Inbox", labelIds: ["INBOX"] };
+}
+
+function inboxPath(folderKey: string, query: string): string {
+  const params = new URLSearchParams();
+  if (folderKey !== "INBOX") params.set("folder", folderKey);
+  if (query) params.set("q", query);
+  const qs = params.toString();
+  return qs ? `/inbox?${qs}` : "/inbox";
+}
+
+// Counted in the Unread folder's badge: unread and not in Spam/Trash.
+function countsAsUnread(m: MessageSummary): boolean {
+  return m.unread && !m.labelIds.includes("TRASH") && !m.labelIds.includes("SPAM");
+}
+
 function fromName(from: string): string {
   const match = from.match(/^"?([^"<]*)"?\s*(<.*>)?$/);
   const name = match?.[1]?.trim();
@@ -48,20 +81,21 @@ function fromName(from: string): string {
 
 export default function InboxClient({
   accountEmail,
+  initialFolderKey,
+  initialQuery,
 }: {
   accountEmail: string | null;
+  initialFolderKey: string;
+  initialQuery: string;
 }) {
   const router = useRouter();
-  const [folder, setFolder] = useState<FolderEntry>({
-    key: "INBOX",
-    label: "Inbox",
-    labelIds: ["INBOX"],
-  });
+  const [folder, setFolder] = useState<FolderEntry>(() => folderForKey(initialFolderKey || "INBOX"));
   const [labels, setLabels] = useState<Label[]>([]);
   const [labelsLoaded, setLabelsLoaded] = useState(false);
   const [pinnedIds, setPinnedIds] = useState<string[]>([]);
-  const [query, setQuery] = useState("");
-  const [searchInput, setSearchInput] = useState("");
+  const [query, setQuery] = useState(initialQuery);
+  const [searchInput, setSearchInput] = useState(initialQuery);
+  const [unreadCount, setUnreadCount] = useState<number | null>(null);
   const [messages, setMessages] = useState<MessageSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [nextPageToken, setNextPageToken] = useState<string | undefined>();
@@ -126,11 +160,7 @@ export default function InboxClient({
     (s) =>
       s.synthetic ||
       (labelsLoaded ? labels.some((l) => l.id === s.id) : DEFAULT_VISIBLE_IDS.has(s.id))
-  ).map((s) => ({
-    key: s.id,
-    label: s.label,
-    labelIds: s.id === "ALL" ? undefined : [s.id],
-  }));
+  ).map((s) => folderForKey(s.id));
 
   const userLabelObjects = labels.filter((l) => l.type === "user");
 
@@ -143,6 +173,42 @@ export default function InboxClient({
     .filter((l) => !pinnedIds.includes(l.id))
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((l) => ({ key: l.id, label: l.name, labelIds: [l.id], color: l.color }));
+
+  const refreshUnreadCount = useCallback(() => {
+    apiFetch<{ count: number }>("/api/gmail/unread-count")
+      .then((data) => {
+        setUnreadCount(data.count);
+        setCachedUnreadCount(data.count);
+      })
+      .catch(() => {
+        // Non-critical — the badge just keeps its last value.
+      });
+  }, []);
+
+  // Optimistic badge update for a local read/unread/trash change; Gmail's
+  // own count replaces it once the change has been saved.
+  function adjustUnreadCount(delta: number) {
+    if (delta === 0) return;
+    setUnreadCount((c) => {
+      if (c === null) return c;
+      const next = Math.max(0, c + delta);
+      setCachedUnreadCount(next);
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    const cached = getCachedUnreadCount();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show the last known count instantly
+    if (cached !== null) setUnreadCount(cached);
+    refreshUnreadCount();
+  }, [refreshUnreadCount]);
+
+  // Keep the URL in step with the open folder/search, so Back from an email
+  // or a reload returns to the same list.
+  useEffect(() => {
+    window.history.replaceState(null, "", inboxPath(folder.key, query));
+  }, [folder.key, query]);
 
   const load = useCallback(
     async (
@@ -174,10 +240,26 @@ export default function InboxClient({
           nextPageToken?: string;
         }>(`/api/gmail/messages?${params.toString()}`);
 
-        const merged = opts.append ? [...messagesRef.current, ...data.messages] : data.messages;
+        let merged = opts.append ? [...messagesRef.current, ...data.messages] : data.messages;
+        // In Unread, messages read since the folder was opened stay listed
+        // (as read) until a manual refresh or a folder switch.
+        if (!opts.append && folder.key === "UNREAD") {
+          const kept = getKeptRead();
+          if (kept.size) {
+            const fetchedIds = new Set(data.messages.map((m) => m.id));
+            const previous = getCachedMessages(cacheKey)?.messages ?? messagesRef.current;
+            const stillShown = previous.filter(
+              (m) => kept.has(m.id) && !fetchedIds.has(m.id) && !m.labelIds.includes("TRASH")
+            );
+            merged = [...data.messages, ...stillShown].sort(
+              (a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0)
+            );
+          }
+        }
         setMessages(merged);
         setNextPageToken(data.nextPageToken);
         setCachedMessages(cacheKey, { messages: merged, nextPageToken: data.nextPageToken });
+        if (!opts.append) refreshUnreadCount();
       } catch (err) {
         if (err instanceof ReconnectRequiredClientError) {
           setReconnectNeeded(true);
@@ -188,7 +270,7 @@ export default function InboxClient({
         setLoading(false);
       }
     },
-    [folder, query]
+    [folder, query, refreshUnreadCount]
   );
 
   useEffect(() => {
@@ -283,7 +365,8 @@ export default function InboxClient({
 
   function applyActionLocally(ids: string[], action: RowAction) {
     const change = ROW_ACTION_LABEL_CHANGES[action];
-    const next = messages
+    const before = messages.filter((m) => ids.includes(m.id));
+    const changed = messages
       .map((m) => {
         if (!ids.includes(m.id)) return m;
         const labelIds = Array.from(
@@ -296,15 +379,28 @@ export default function InboxClient({
           starred: labelIds.includes("STARRED"),
         };
       })
-      // If the message no longer matches the folder we're viewing (e.g.
-      // archiving it while looking at Inbox), drop it from the list.
-      .filter(
-        (m) =>
-          !ids.includes(m.id) ||
-          !folder.labelIds ||
-          folder.labelIds.every((l) => m.labelIds.includes(l))
+    // If the message no longer matches the folder we're viewing (e.g.
+    // archiving it while looking at Inbox), drop it from the list — except
+    // that reading something in Unread keeps it there until the next
+    // refresh, and trashed mail leaves every folder but Trash.
+    const next = changed.filter((m) => {
+      if (!ids.includes(m.id)) return true;
+      if (m.labelIds.includes("TRASH") && folder.key !== "TRASH") return false;
+      const required = (folder.labelIds ?? []).filter(
+        (l) => !(folder.key === "UNREAD" && l === "UNREAD")
       );
+      return required.every((l) => m.labelIds.includes(l));
+    });
     updateMessagesAndCache(next);
+
+    const after = changed.filter((m) => ids.includes(m.id));
+    adjustUnreadCount(
+      after.filter(countsAsUnread).length - before.filter(countsAsUnread).length
+    );
+    if (action === "markRead" || action === "markUnread") {
+      setReadInAllCachedMessages(ids, action === "markRead");
+    }
+    if (action === "markRead" && folder.key === "UNREAD") addKeptRead(ids);
   }
 
   // Optimistic: the list updates the instant you click, before Gmail has
@@ -327,6 +423,9 @@ export default function InboxClient({
       );
     } catch (err) {
       updateMessagesAndCache(snapshot);
+      if (action === "markRead" || action === "markUnread") {
+        setReadInAllCachedMessages(ids, action === "markUnread");
+      }
       if (err instanceof ReconnectRequiredClientError) {
         setReconnectNeeded(true);
       } else {
@@ -334,6 +433,8 @@ export default function InboxClient({
           (err instanceof Error ? err.message : "Action failed") + " — change was undone"
         );
       }
+    } finally {
+      refreshUnreadCount();
     }
   }
 
@@ -344,6 +445,7 @@ export default function InboxClient({
     setActionError(null);
     const snapshot = messages;
     updateMessagesAndCache(messages.filter((m) => !ids.includes(m.id)));
+    adjustUnreadCount(-messages.filter((m) => ids.includes(m.id) && countsAsUnread(m)).length);
     setSelected(new Set());
     try {
       await Promise.all(
@@ -358,7 +460,23 @@ export default function InboxClient({
           (err instanceof Error ? err.message : "Delete failed") + " — change was undone"
         );
       }
+    } finally {
+      refreshUnreadCount();
     }
+  }
+
+  // Opening a thread marks it read (the thread view saves that to Gmail);
+  // reflect it here right away so the list and badge are right on return.
+  function openThread(m: MessageSummary) {
+    const unreadInThread = messages.filter((x) => x.threadId === m.threadId && x.unread).map((x) => x.id);
+    if (unreadInThread.length) applyActionLocally(unreadInThread, "markRead");
+    setReturnTo(inboxPath(folder.key, query));
+    router.push(`/thread/${m.threadId}`);
+  }
+
+  function selectFolder(f: FolderEntry) {
+    if (f.key !== folder.key) clearKeptRead();
+    setFolder(f);
   }
 
   async function logout() {
@@ -369,6 +487,7 @@ export default function InboxClient({
   // Shows a blocking spinner for a manual Refresh click specifically —
   // the periodic 60s background refresh stays silent on purpose.
   async function handleManualRefresh() {
+    clearKeptRead();
     setManualRefreshing(true);
     try {
       await load({ force: true });
@@ -430,7 +549,7 @@ export default function InboxClient({
         }`}
       >
         <button
-          onClick={() => setFolder(f)}
+          onClick={() => selectFolder(f)}
           className="flex items-center gap-2.5 flex-1 min-w-0 text-left px-3 py-2 truncate"
         >
           {f.color !== undefined && (
@@ -440,6 +559,11 @@ export default function InboxClient({
             />
           )}
           <span className="min-w-0 truncate">{f.label}</span>
+          {f.key === "UNREAD" && !!unreadCount && (
+            <span className="ml-auto shrink-0 text-xs font-medium tabular-nums text-ink">
+              {unreadCount.toLocaleString()}
+            </span>
+          )}
         </button>
         {pinned !== undefined && (
           <button
@@ -540,6 +664,7 @@ export default function InboxClient({
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              if (searchInput !== query) clearKeptRead();
               setQuery(searchInput);
             }}
             className="flex-1"
@@ -599,7 +724,7 @@ export default function InboxClient({
                 <li
                   key={m.id}
                   className="flex items-center gap-3 px-3 py-2.5 border-b border-line cursor-pointer hover:bg-surface-2"
-                  onClick={() => router.push(`/thread/${m.threadId}`)}
+                  onClick={() => openThread(m)}
                 >
                   <input
                     type="checkbox"
