@@ -148,6 +148,16 @@ export function setCachedUnreadCount(count: number): void {
   writeJSON(UNREAD_COUNT_KEY, count);
 }
 
+const LABEL_UNREAD_KEY = "mail:labelUnread";
+
+export function getCachedLabelUnread(): Record<string, number> | null {
+  return readJSON<Record<string, number>>(LABEL_UNREAD_KEY);
+}
+
+export function setCachedLabelUnread(counts: Record<string, number>): void {
+  writeJSON(LABEL_UNREAD_KEY, counts);
+}
+
 const LABELS_CACHE_KEY = "mail:cache:labels";
 
 export function getCachedLabels(): CachedLabels | null {

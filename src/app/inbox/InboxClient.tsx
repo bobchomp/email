@@ -20,6 +20,8 @@ import {
   setReturnTo,
   getCachedUnreadCount,
   setCachedUnreadCount,
+  getCachedLabelUnread,
+  setCachedLabelUnread,
 } from "@/lib/inbox-cache";
 import ComposeModal from "./ComposeModal";
 import LoadingOverlay from "@/components/LoadingOverlay";
@@ -73,6 +75,12 @@ function countsAsUnread(m: MessageSummary): boolean {
   return m.unread && !m.labelIds.includes("TRASH") && !m.labelIds.includes("SPAM");
 }
 
+// Counted in a label's badge — Gmail's own label stat, which counts every
+// unread message carrying the label.
+function countsAsUnreadIn(m: MessageSummary, labelId: string): boolean {
+  return m.unread && m.labelIds.includes(labelId);
+}
+
 function fromName(from: string): string {
   const match = from.match(/^"?([^"<]*)"?\s*(<.*>)?$/);
   const name = match?.[1]?.trim();
@@ -96,6 +104,8 @@ export default function InboxClient({
   const [query, setQuery] = useState(initialQuery);
   const [searchInput, setSearchInput] = useState(initialQuery);
   const [unreadCount, setUnreadCount] = useState<number | null>(null);
+  // Unread counts for the pinned labels, keyed by label id.
+  const [labelUnread, setLabelUnread] = useState<Record<string, number>>({});
   const [messages, setMessages] = useState<MessageSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [nextPageToken, setNextPageToken] = useState<string | undefined>();
@@ -174,35 +184,71 @@ export default function InboxClient({
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((l) => ({ key: l.id, label: l.name, labelIds: [l.id], color: l.color }));
 
+  // Read inside refreshUnreadCount without making it (and so load()) change
+  // identity every time a label is pinned or unpinned.
+  const pinnedIdsRef = useRef<string[]>([]);
+
   const refreshUnreadCount = useCallback(() => {
-    apiFetch<{ count: number }>("/api/gmail/unread-count")
+    const labels = pinnedIdsRef.current.join(",");
+    apiFetch<{ count: number; labels: Record<string, number> }>(
+      `/api/gmail/unread-count${labels ? `?labels=${encodeURIComponent(labels)}` : ""}`
+    )
       .then((data) => {
         setUnreadCount(data.count);
         setCachedUnreadCount(data.count);
+        setLabelUnread(data.labels);
+        setCachedLabelUnread(data.labels);
       })
       .catch(() => {
-        // Non-critical — the badge just keeps its last value.
+        // Non-critical — the badges just keep their last values.
       });
   }, []);
 
   // Optimistic badge update for a local read/unread/trash change; Gmail's
-  // own count replaces it once the change has been saved.
-  function adjustUnreadCount(delta: number) {
-    if (delta === 0) return;
-    setUnreadCount((c) => {
-      if (c === null) return c;
-      const next = Math.max(0, c + delta);
-      setCachedUnreadCount(next);
-      return next;
-    });
+  // own counts replace it once the change has been saved.
+  function adjustUnreadCount(delta: number, labelDeltas: Record<string, number> = {}) {
+    if (delta !== 0) {
+      setUnreadCount((c) => {
+        if (c === null) return c;
+        const next = Math.max(0, c + delta);
+        setCachedUnreadCount(next);
+        return next;
+      });
+    }
+    if (Object.values(labelDeltas).some((d) => d !== 0)) {
+      setLabelUnread((prev) => {
+        const next = { ...prev };
+        for (const [id, d] of Object.entries(labelDeltas)) {
+          if (id in next) next[id] = Math.max(0, next[id] + d);
+        }
+        setCachedLabelUnread(next);
+        return next;
+      });
+    }
+  }
+
+  // Unread counts of the pinned labels in a set of messages, so a local
+  // change can adjust each label's badge.
+  function pinnedUnread(list: MessageSummary[]): Record<string, number> {
+    return Object.fromEntries(
+      pinnedIds.map((id) => [id, list.filter((m) => countsAsUnreadIn(m, id)).length])
+    );
   }
 
   useEffect(() => {
     const cached = getCachedUnreadCount();
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- show the last known count instantly
+    const cachedLabels = getCachedLabelUnread();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show the last known counts instantly
     if (cached !== null) setUnreadCount(cached);
+    if (cachedLabels) setLabelUnread(cachedLabels);
+  }, []);
+
+  // Runs on mount and whenever the pinned labels change (including once
+  // they've loaded), so newly pinned labels get their count.
+  useEffect(() => {
+    pinnedIdsRef.current = pinnedIds;
     refreshUnreadCount();
-  }, [refreshUnreadCount]);
+  }, [pinnedIds, refreshUnreadCount]);
 
   // Keep the URL in step with the open folder/search, so Back from an email
   // or a reload returns to the same list.
@@ -394,8 +440,11 @@ export default function InboxClient({
     updateMessagesAndCache(next);
 
     const after = changed.filter((m) => ids.includes(m.id));
+    const labelsBefore = pinnedUnread(before);
+    const labelsAfter = pinnedUnread(after);
     adjustUnreadCount(
-      after.filter(countsAsUnread).length - before.filter(countsAsUnread).length
+      after.filter(countsAsUnread).length - before.filter(countsAsUnread).length,
+      Object.fromEntries(pinnedIds.map((id) => [id, labelsAfter[id] - labelsBefore[id]]))
     );
     if (action === "markRead" || action === "markUnread") {
       setReadInAllCachedMessages(ids, action === "markRead");
@@ -445,7 +494,12 @@ export default function InboxClient({
     setActionError(null);
     const snapshot = messages;
     updateMessagesAndCache(messages.filter((m) => !ids.includes(m.id)));
-    adjustUnreadCount(-messages.filter((m) => ids.includes(m.id) && countsAsUnread(m)).length);
+    const deleted = messages.filter((m) => ids.includes(m.id));
+    const labelsDeleted = pinnedUnread(deleted);
+    adjustUnreadCount(
+      -deleted.filter(countsAsUnread).length,
+      Object.fromEntries(pinnedIds.map((id) => [id, -labelsDeleted[id]]))
+    );
     setSelected(new Set());
     try {
       await Promise.all(
@@ -540,6 +594,10 @@ export default function InboxClient({
   // is what shows the pin/unpin control — system folders never get one.
   function NavButton({ f, pinned }: { f: FolderEntry; pinned?: boolean }) {
     const isActive = folder.key === f.key;
+    // The Unread folder and pinned labels show how many unread messages they
+    // hold; a pinned label with unread mail is also shown in bold.
+    const count = f.key === "UNREAD" ? unreadCount : pinned ? labelUnread[f.key] : undefined;
+    const hasUnread = !!count && count > 0;
     return (
       <div
         className={`group flex items-center rounded-lg text-sm ${
@@ -558,10 +616,14 @@ export default function InboxClient({
               style={{ background: f.color ?? "var(--color-line)" }}
             />
           )}
-          <span className="min-w-0 truncate">{f.label}</span>
-          {f.key === "UNREAD" && !!unreadCount && (
+          <span
+            className={`min-w-0 truncate ${pinned && hasUnread ? "font-semibold text-body" : ""}`}
+          >
+            {f.label}
+          </span>
+          {hasUnread && (
             <span className="ml-auto shrink-0 text-xs font-medium tabular-nums text-ink">
-              {unreadCount.toLocaleString()}
+              {count.toLocaleString()}
             </span>
           )}
         </button>

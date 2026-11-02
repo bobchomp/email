@@ -317,6 +317,27 @@ export async function getUnreadCount(): Promise<number> {
   });
 }
 
+// Unread messages per label (for the sidebar's pinned labels), from each
+// label's own stats — one cheap labels.get per label.
+export async function getLabelUnreadCounts(labelIds: string[]): Promise<Record<string, number>> {
+  if (labelIds.length === 0) return {};
+  return withGmail(async (gmail) => {
+    const results = await Promise.all(
+      labelIds.map((id) =>
+        gmail.users.labels
+          .get({ userId: "me", id })
+          .then((res) => [id, res.data.messagesUnread ?? 0] as const)
+          // A label deleted in Gmail since it was pinned just has no count.
+          .catch((err) => {
+            if (isReconnectRequiredError(err)) throw err;
+            return null;
+          })
+      )
+    );
+    return Object.fromEntries(results.filter((r) => r !== null));
+  });
+}
+
 export type Label = {
   id: string;
   name: string;
