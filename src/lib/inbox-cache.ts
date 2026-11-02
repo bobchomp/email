@@ -63,6 +63,91 @@ export function isFresh(fetchedAt: number, maxAgeMs: number = MESSAGES_MAX_AGE_M
   return Date.now() - fetchedAt < maxAgeMs;
 }
 
+// A message's read state changed (row action, or opened in the thread
+// view): reflect it in every cached folder listing, not just the current
+// one, so switching folders doesn't briefly show stale bold rows.
+export function setReadInAllCachedMessages(ids: string[], read: boolean): void {
+  const idSet = new Set(ids);
+  let keys: string[] = [];
+  try {
+    keys = Object.keys(sessionStorage).filter((k) => k.startsWith("mail:cache:messages:"));
+  } catch {
+    return;
+  }
+  for (const key of keys) {
+    const cached = getCachedMessages(key);
+    if (!cached || !cached.messages.some((m) => idSet.has(m.id))) continue;
+    writeJSON(key, {
+      ...cached,
+      messages: cached.messages.map((m) =>
+        idSet.has(m.id)
+          ? {
+              ...m,
+              unread: !read,
+              labelIds: read
+                ? m.labelIds.filter((l) => l !== "UNREAD")
+                : Array.from(new Set([...m.labelIds, "UNREAD"])),
+            }
+          : m
+      ),
+    } satisfies CachedMessages);
+  }
+}
+
+// Messages read while viewing the Unread folder. They stay listed (shown as
+// read) until a manual refresh or a folder switch, even across background
+// refreshes and a trip into the thread view and back.
+const KEPT_READ_KEY = "mail:unreadKeptRead";
+
+export function getKeptRead(): Set<string> {
+  return new Set(readJSON<string[]>(KEPT_READ_KEY) ?? []);
+}
+
+export function addKeptRead(ids: string[]): void {
+  writeJSON(KEPT_READ_KEY, [...new Set([...getKeptRead(), ...ids])]);
+}
+
+export function clearKeptRead(): void {
+  try {
+    sessionStorage.removeItem(KEPT_READ_KEY);
+  } catch {
+    // Nothing to clear.
+  }
+}
+
+// The inbox URL (folder + search) a thread was opened from, so the thread
+// view's Back/Archive/Trash return to the same list.
+const RETURN_TO_KEY = "mail:returnTo";
+
+export function setReturnTo(path: string): void {
+  try {
+    sessionStorage.setItem(RETURN_TO_KEY, path);
+  } catch {
+    // Falls back to plain /inbox.
+  }
+}
+
+export function getReturnTo(): string {
+  try {
+    const path = sessionStorage.getItem(RETURN_TO_KEY);
+    // Only ever navigate back into the inbox page.
+    if (path && /^\/inbox(\?|$)/.test(path)) return path;
+  } catch {
+    // Fall through.
+  }
+  return "/inbox";
+}
+
+const UNREAD_COUNT_KEY = "mail:unreadCount";
+
+export function getCachedUnreadCount(): number | null {
+  return readJSON<number>(UNREAD_COUNT_KEY);
+}
+
+export function setCachedUnreadCount(count: number): void {
+  writeJSON(UNREAD_COUNT_KEY, count);
+}
+
 const LABELS_CACHE_KEY = "mail:cache:labels";
 
 export function getCachedLabels(): CachedLabels | null {

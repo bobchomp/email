@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { MessageDetail } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
 import { THREAD_ORDER_KEY } from "../../inbox/InboxClient";
+import { getReturnTo } from "@/lib/inbox-cache";
 import InlineComposer from "./InlineComposer";
 import { buildRecipients, type ComposeMode } from "@/lib/reply-compose";
 import LoadingOverlay from "@/components/LoadingOverlay";
@@ -110,7 +111,7 @@ export default function ThreadClient({
         body: JSON.stringify({ action }),
       });
       if (action === "archive" || action === "trash") {
-        router.push("/inbox");
+        router.push(getReturnTo());
       } else {
         load();
       }
@@ -143,7 +144,7 @@ export default function ThreadClient({
 
       <div className="flex items-center gap-3 p-3 border-b border-line bg-surface">
         <button
-          onClick={() => router.push("/inbox")}
+          onClick={() => router.push(getReturnTo())}
           className="text-sm text-muted hover:text-body"
         >
           ← Back
