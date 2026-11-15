@@ -4,7 +4,8 @@ import { SESSION_COOKIE } from "./lib/constants";
 
 // Routes reachable without a valid PIN session. Everything else — including
 // /connect and the Google OAuth start/callback — requires the PIN first.
-const PUBLIC_PATHS = new Set(["/unlock", "/api/auth/pin"]);
+// /privacy must be public: Google links to it from the sign-in consent screen.
+const PUBLIC_PATHS = new Set(["/unlock", "/api/auth/pin", "/privacy"]);
 
 // Tab/home-screen icons must load on the lock screen too.
 const ICON_PATHS = new Set(["/favicon.ico", "/icon.svg", "/apple-icon.png"]);
