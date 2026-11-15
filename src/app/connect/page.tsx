@@ -19,7 +19,7 @@ export default async function ConnectPage({
           </h1>
           <p className="mt-2 text-sm text-muted">
             {account
-              ? `Your connection to ${account.email ?? "Google"} needs to be renewed. This happens roughly every 7 days because the app isn't verified by Google — it takes one click.`
+              ? `Your connection to ${account.email ?? "Google"} was revoked or expired (for example after a Google password change) and needs to be renewed — it takes one click.`
               : "Sign in with Google once. After this, you'll only need your PIN to get back in from any device."}
           </p>
         </div>
