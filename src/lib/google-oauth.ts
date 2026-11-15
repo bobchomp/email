@@ -63,7 +63,7 @@ export async function exchangeCodeForTokens(code: string) {
 }
 
 // Wraps googleapis errors that indicate the refresh token is dead
-// (revoked, or expired after Google's 7-day unverified-app limit).
+// (revoked, expired, or invalidated by a Google password change).
 export function isReconnectRequiredError(err: unknown): boolean {
   const e = err as { code?: number; response?: { data?: { error?: string } }; message?: string };
   const errorCode = e?.response?.data?.error;

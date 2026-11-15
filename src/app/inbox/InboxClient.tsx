@@ -558,8 +558,9 @@ export default function InboxClient({
             Google connection expired
           </h1>
           <p className="mt-2 text-sm text-muted">
-            This happens roughly every 7 days for an unverified app. Reconnect
-            to keep going — your PIN and settings stay the same.
+            Your Google connection was revoked or expired (for example after a
+            Google password change). Reconnect to keep going — your PIN and
+            settings stay the same.
           </p>
           <a
             href="/connect?reason=expired"
@@ -709,7 +710,7 @@ export default function InboxClient({
           {accountEmail && <span className="truncate">{accountEmail}</span>}
           <a
             href="/api/auth/google/start"
-            title="Re-does Google sign-in now so the ~7-day unverified-app connection doesn't lapse"
+            title="Sign in to Google again, e.g. to switch account or renew a revoked connection"
             className="text-left hover:text-body"
           >
             Refresh connection
