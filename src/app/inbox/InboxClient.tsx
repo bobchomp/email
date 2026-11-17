@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import type { MessageSummary, Label } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
 import {
@@ -24,6 +23,7 @@ import {
   setCachedLabelUnread,
 } from "@/lib/inbox-cache";
 import ComposeModal from "./ComposeModal";
+import { onMessageAction, type SyncedAction } from "@/lib/tab-sync";
 import LoadingOverlay from "@/components/LoadingOverlay";
 
 type FolderEntry = { key: string; label: string; labelIds?: string[]; color?: string | null };
@@ -96,7 +96,6 @@ export default function InboxClient({
   initialFolderKey: string;
   initialQuery: string;
 }) {
-  const router = useRouter();
   const [folder, setFolder] = useState<FolderEntry>(() => folderForKey(initialFolderKey || "INBOX"));
   const [labels, setLabels] = useState<Label[]>([]);
   const [labelsLoaded, setLabelsLoaded] = useState(false);
@@ -525,8 +524,29 @@ export default function InboxClient({
     const unreadInThread = messages.filter((x) => x.threadId === m.threadId && x.unread).map((x) => x.id);
     if (unreadInThread.length) applyActionLocally(unreadInThread, "markRead");
     setReturnTo(inboxPath(folder.key, query));
-    router.push(`/thread/${m.threadId}`);
+    // Always a new tab, so this list stays put. Opened without noopener on
+    // purpose: the tab inherits this tab's session state (thread order for
+    // the arrow keys, list caches) and can close itself again.
+    window.open(`/thread/${m.threadId}`, "_blank");
   }
+
+  // Changes made in an email's tab (star, archive, trash, marking read when
+  // it's opened) are applied to this list straight away.
+  const remoteActionHandler = useRef<(messageId: string, action: SyncedAction) => void>(() => {});
+  useEffect(() => {
+    remoteActionHandler.current = (messageId, action) => {
+      const shown = messages.find((m) => m.id === messageId);
+      const alreadyApplied =
+        shown &&
+        ((action === "markRead" && !shown.unread) ||
+          (action === "star" && shown.starred) ||
+          (action === "unstar" && !shown.starred));
+      if (shown && !alreadyApplied) applyActionLocally([messageId], action);
+      else if (!shown && action === "markRead") setReadInAllCachedMessages([messageId], true);
+      refreshUnreadCount();
+    };
+  });
+  useEffect(() => onMessageAction((id, action) => remoteActionHandler.current(id, action)), []);
 
   function selectFolder(f: FolderEntry) {
     if (f.key !== folder.key) clearKeptRead();

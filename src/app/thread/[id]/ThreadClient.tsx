@@ -6,6 +6,7 @@ import type { MessageDetail } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
 import { THREAD_ORDER_KEY } from "../../inbox/InboxClient";
 import { getReturnTo } from "@/lib/inbox-cache";
+import { announceMessageAction, closeTabOr } from "@/lib/tab-sync";
 import InlineComposer from "./InlineComposer";
 import { buildRecipients, type ComposeMode } from "@/lib/reply-compose";
 import LoadingOverlay from "@/components/LoadingOverlay";
@@ -51,7 +52,7 @@ export default function ThreadClient({
           apiFetch(`/api/gmail/messages/${m.id}`, {
             method: "PATCH",
             body: JSON.stringify({ action: "markRead" }),
-          })
+          }).then(() => announceMessageAction(m.id, "markRead"))
         )
       );
     } catch (err) {
@@ -104,14 +105,21 @@ export default function ThreadClient({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [threadId, composerFor, router]);
 
+  // This email is usually its own tab, opened from the inbox (which is still
+  // open behind it): leaving closes the tab rather than opening a second inbox.
+  function leave() {
+    closeTabOr(() => router.push(getReturnTo()));
+  }
+
   async function act(id: string, action: "star" | "unstar" | "archive" | "trash") {
     try {
       await apiFetch(`/api/gmail/messages/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ action }),
       });
+      announceMessageAction(id, action);
       if (action === "archive" || action === "trash") {
-        router.push(getReturnTo());
+        leave();
       } else {
         load();
       }
@@ -144,7 +152,7 @@ export default function ThreadClient({
 
       <div className="flex items-center gap-3 p-3 border-b border-line bg-surface">
         <button
-          onClick={() => router.push(getReturnTo())}
+          onClick={leave}
           className="text-sm text-muted hover:text-body"
         >
           ← Back
