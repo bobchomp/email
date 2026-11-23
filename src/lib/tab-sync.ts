@@ -4,6 +4,7 @@
 export type SyncedAction = "markRead" | "star" | "unstar" | "archive" | "trash";
 
 type MessageActionEvent = { type: "messageAction"; messageId: string; action: SyncedAction };
+type LabelsChangedEvent = { type: "labelsChanged" };
 
 const CHANNEL = "mail-sync";
 
@@ -16,6 +17,26 @@ export function announceMessageAction(messageId: string, action: SyncedAction): 
   } catch {
     // Older browsers: the inbox catches up on its next refresh.
   }
+}
+
+// A folder was created (or a conversation's folders changed) in another tab.
+export function announceLabelsChanged(): void {
+  try {
+    const channel = new BroadcastChannel(CHANNEL);
+    channel.postMessage({ type: "labelsChanged" } satisfies LabelsChangedEvent);
+    channel.close();
+  } catch {
+    // The inbox picks it up on its next refresh.
+  }
+}
+
+export function onLabelsChanged(handler: () => void): () => void {
+  if (typeof BroadcastChannel === "undefined") return () => {};
+  const channel = new BroadcastChannel(CHANNEL);
+  channel.onmessage = (e: MessageEvent<LabelsChangedEvent>) => {
+    if (e.data?.type === "labelsChanged") handler();
+  };
+  return () => channel.close();
 }
 
 export function onMessageAction(

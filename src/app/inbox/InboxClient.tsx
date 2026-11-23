@@ -23,7 +23,7 @@ import {
   setCachedLabelUnread,
 } from "@/lib/inbox-cache";
 import ComposeModal from "./ComposeModal";
-import { onMessageAction, type SyncedAction } from "@/lib/tab-sync";
+import { onLabelsChanged, onMessageAction, type SyncedAction } from "@/lib/tab-sync";
 import { tabTitle, useTabTitle } from "@/lib/use-tab-title";
 import LoadingOverlay from "@/components/LoadingOverlay";
 
@@ -555,6 +555,20 @@ export default function InboxClient({
     };
   });
   useEffect(() => onMessageAction((id, action) => remoteActionHandler.current(id, action)), []);
+
+  // A folder created from an email's tab appears in this sidebar right away.
+  useEffect(
+    () =>
+      onLabelsChanged(() => {
+        apiFetch<{ labels: Label[] }>("/api/gmail/labels")
+          .then((data) => {
+            setLabels(data.labels);
+            setCachedLabels(data.labels);
+          })
+          .catch(() => {});
+      }),
+    []
+  );
 
   function selectFolder(f: FolderEntry) {
     if (f.key !== folder.key) clearKeptRead();

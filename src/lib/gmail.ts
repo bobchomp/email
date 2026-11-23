@@ -291,6 +291,23 @@ export async function modifyMessage(
   );
 }
 
+// Folders (user labels) apply to a whole conversation, as in Gmail. Moving
+// also takes it out of the Inbox (Gmail's "Move to").
+export async function setThreadFolders(
+  threadId: string,
+  opts: { add: string[]; remove: string[]; move: boolean }
+): Promise<void> {
+  const removeLabelIds = [...opts.remove, ...(opts.move ? ["INBOX"] : [])];
+  if (opts.add.length === 0 && removeLabelIds.length === 0) return;
+  await withGmail((gmail) =>
+    gmail.users.threads.modify({
+      userId: "me",
+      id: threadId,
+      requestBody: { addLabelIds: opts.add, removeLabelIds },
+    })
+  );
+}
+
 export async function trashMessage(id: string): Promise<void> {
   await withGmail((gmail) => gmail.users.messages.trash({ userId: "me", id }));
 }
@@ -358,6 +375,33 @@ export async function listLabels(): Promise<Label[]> {
         type: l.type,
         color: l.color?.backgroundColor ?? null,
       }));
+  });
+}
+
+// Creates a folder (user label). If one with that name already exists, it
+// is returned instead of failing, so "New folder…" with an existing name
+// just picks that folder.
+export async function createLabel(name: string): Promise<Label> {
+  return withGmail(async (gmail) => {
+    const toLabel = (l: gmail_v1.Schema$Label): Label => ({
+      id: l.id!,
+      name: l.name!,
+      type: l.type,
+      color: l.color?.backgroundColor ?? null,
+    });
+    try {
+      const res = await gmail.users.labels.create({
+        userId: "me",
+        requestBody: { name, labelListVisibility: "labelShow", messageListVisibility: "show" },
+      });
+      return toLabel(res.data);
+    } catch (err) {
+      const existing = (await gmail.users.labels.list({ userId: "me" })).data.labels?.find(
+        (l) => l.name?.toLowerCase() === name.toLowerCase()
+      );
+      if (existing) return toLabel(existing);
+      throw err;
+    }
   });
 }
 

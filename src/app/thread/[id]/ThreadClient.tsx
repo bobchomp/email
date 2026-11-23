@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MessageDetail } from "@/lib/gmail";
 import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
 import { THREAD_ORDER_KEY } from "../../inbox/InboxClient";
 import { getReturnTo } from "@/lib/inbox-cache";
-import { announceMessageAction, closeTabOr } from "@/lib/tab-sync";
+import { announceLabelsChanged, announceMessageAction, closeTabOr } from "@/lib/tab-sync";
+import FolderPicker, { type FolderChange } from "@/components/FolderPicker";
 import { tabTitle, useTabTitle } from "@/lib/use-tab-title";
 import InlineComposer from "./InlineComposer";
 import { buildRecipients, type ComposeMode } from "@/lib/reply-compose";
@@ -34,6 +35,7 @@ export default function ThreadClient({
   const [messages, setMessages] = useState<MessageDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [composerFor, setComposerFor] = useState<{
     messageId: string;
     mode: ComposeMode;
@@ -117,6 +119,27 @@ export default function ThreadClient({
     closeTabOr(() => router.push(getReturnTo()));
   }
 
+  const closeFolderPicker = useCallback(() => setFolderPickerOpen(false), []);
+
+  function onFoldersChanged(change: FolderChange) {
+    setFolderPickerOpen(false);
+    announceLabelsChanged();
+    if (change.move) {
+      // Out of the Inbox, like Archive: update the inbox tab, then leave.
+      for (const m of messages) announceMessageAction(m.id, "archive");
+      leave();
+      return;
+    }
+    setMessages((prev) =>
+      prev.map((m) => ({
+        ...m,
+        labelIds: Array.from(
+          new Set([...m.labelIds.filter((l) => !change.remove.includes(l)), ...change.add])
+        ),
+      }))
+    );
+  }
+
   async function act(id: string, action: "star" | "unstar" | "archive" | "trash") {
     try {
       await apiFetch(`/api/gmail/messages/${id}`, {
@@ -168,6 +191,31 @@ export default function ThreadClient({
         </h1>
         {last && (
           <div className="flex gap-3 text-sm text-muted">
+            <div className="relative">
+              <button
+                onClick={() => setFolderPickerOpen((open) => !open)}
+                aria-expanded={folderPickerOpen}
+                className="flex items-center gap-1.5 hover:text-body"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+                  <path d="M12 11v5M9.5 13.5h5" />
+                </svg>
+                Add to folder
+              </button>
+              {folderPickerOpen && (
+                <FolderPicker
+                  threadId={threadId}
+                  // Folders apply to the whole conversation; a folder counts
+                  // as "in" if any message in it has the label.
+                  currentLabelIds={Array.from(
+                    new Set(messages.flatMap((m) => m.labelIds.filter((l) => /^Label_\d+$/.test(l))))
+                  )}
+                  onDone={onFoldersChanged}
+                  onClose={closeFolderPicker}
+                />
+              )}
+            </div>
             <button
               onClick={() => act(last.id, last.starred ? "unstar" : "star")}
               className={last.starred ? "text-seal" : "hover:text-body"}
