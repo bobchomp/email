@@ -1,4 +1,7 @@
+import type { Metadata } from "next";
 import { getGoogleAccount } from "@/lib/db";
+
+export const metadata: Metadata = { title: "Connect Google" };
 
 export const dynamic = "force-dynamic";
 

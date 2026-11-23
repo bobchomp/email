@@ -24,6 +24,7 @@ import {
 } from "@/lib/inbox-cache";
 import ComposeModal from "./ComposeModal";
 import { onMessageAction, type SyncedAction } from "@/lib/tab-sync";
+import { tabTitle, useTabTitle } from "@/lib/use-tab-title";
 import LoadingOverlay from "@/components/LoadingOverlay";
 
 type FolderEntry = { key: string; label: string; labelIds?: string[]; color?: string | null };
@@ -172,6 +173,13 @@ export default function InboxClient({
   ).map((s) => folderForKey(s.id));
 
   const userLabelObjects = labels.filter((l) => l.type === "user");
+
+  // "Inbox | you@example.com", "Clients | …", "Search: invoice | …". A user
+  // label's name is only known once the label list has loaded.
+  const folderName = SYSTEM_LABEL_ORDER.some((s) => s.id === folder.key)
+    ? folder.label
+    : (labels.find((l) => l.id === folder.key)?.name ?? "Mail");
+  useTabTitle(tabTitle(query ? `Search: ${query}` : folderName, accountEmail));
 
   const pinnedLabels: FolderEntry[] = pinnedIds
     .map((id) => userLabelObjects.find((l) => l.id === id))
