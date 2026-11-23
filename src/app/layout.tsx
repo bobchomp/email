@@ -8,8 +8,10 @@ const poppins = Poppins({
   weight: ["400", "500", "600", "700"],
 });
 
+// No app-wide title: the inbox and email views set "<page> | <account>"
+// themselves (src/lib/use-tab-title.ts), and a metadata title here would
+// overwrite it once the page loads. Other pages declare their own.
 export const metadata: Metadata = {
-  title: "Mail",
   description: "Your Gmail, PIN-protected.",
 };
 

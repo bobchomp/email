@@ -7,6 +7,7 @@ import { apiFetch, ReconnectRequiredClientError } from "@/lib/api-client";
 import { THREAD_ORDER_KEY } from "../../inbox/InboxClient";
 import { getReturnTo } from "@/lib/inbox-cache";
 import { announceMessageAction, closeTabOr } from "@/lib/tab-sync";
+import { tabTitle, useTabTitle } from "@/lib/use-tab-title";
 import InlineComposer from "./InlineComposer";
 import { buildRecipients, type ComposeMode } from "@/lib/reply-compose";
 import LoadingOverlay from "@/components/LoadingOverlay";
@@ -37,6 +38,11 @@ export default function ThreadClient({
     messageId: string;
     mode: ComposeMode;
   } | null>(null);
+
+  // "<subject> | you@example.com" — the latest message's subject, as shown
+  // in the header.
+  const subject = messages.length ? messages[messages.length - 1].subject : null;
+  useTabTitle(tabTitle(subject ?? (error ? "Email" : "Loading…"), accountEmail));
 
   async function load() {
     setLoading(true);
