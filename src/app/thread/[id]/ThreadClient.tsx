@@ -36,6 +36,13 @@ export default function ThreadClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  // Browsers only let a page close a tab it opened itself, so Close is only
+  // offered when the inbox opened this one (not a pasted link or bookmark).
+  const [canCloseTab, setCanCloseTab] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- window.opener is only known in the browser
+    setCanCloseTab(!!window.opener);
+  }, []);
   const [composerFor, setComposerFor] = useState<{
     messageId: string;
     mode: ComposeMode;
@@ -113,8 +120,8 @@ export default function ThreadClient({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [threadId, composerFor, router]);
 
-  // This email is usually its own tab, opened from the inbox (which is still
-  // open behind it): leaving closes the tab rather than opening a second inbox.
+  // After Archive/Trash/Move this email is done with: close its tab if the
+  // inbox opened it (the inbox is still open behind it), else go back.
   function leave() {
     closeTabOr(() => router.push(getReturnTo()));
   }
@@ -181,11 +188,20 @@ export default function ThreadClient({
 
       <div className="flex items-center gap-3 p-3 border-b border-line bg-surface">
         <button
-          onClick={leave}
+          onClick={() => router.push(getReturnTo())}
           className="text-sm text-muted hover:text-body"
         >
           ← Back
         </button>
+        {canCloseTab && (
+          <button
+            onClick={() => window.close()}
+            title="Close this tab"
+            className="flex items-center gap-1 text-sm text-muted hover:text-body"
+          >
+            <span aria-hidden>✕</span> Close
+          </button>
+        )}
         <h1 className="flex-1 min-w-0 truncate font-medium text-body">
           {last?.subject}
         </h1>
