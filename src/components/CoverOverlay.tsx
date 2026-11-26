@@ -6,17 +6,20 @@ import cover from "@/assets/cover.png";
 const STORAGE_KEY = "mail:coverOn";
 const TOGGLE_KEY = "`";
 
-// A full-screen image over every page, toggled with the ` key. It stays on
-// across pages and new tabs (session storage) until toggled off.
+// A full-screen image over every page, on by default and toggled with the `
+// key. Turning it off is remembered across pages and new tabs (session
+// storage) until it's turned back on or the browser session ends.
 export default function CoverOverlay() {
-  const [on, setOn] = useState(false);
+  // Starts on, including in the server-rendered HTML, so the app never
+  // shows underneath before the page has loaded.
+  const [on, setOn] = useState(true);
 
   useEffect(() => {
     try {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- session storage is only readable in the browser
-      setOn(sessionStorage.getItem(STORAGE_KEY) === "1");
+      if (sessionStorage.getItem(STORAGE_KEY) === "0") setOn(false);
     } catch {
-      // Storage unavailable: starts off.
+      // Storage unavailable: stays on.
     }
 
     function onKeyDown(e: KeyboardEvent) {
